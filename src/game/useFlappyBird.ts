@@ -13,6 +13,7 @@ import type {
 } from './types';
 import birdImgSrc from '../assets/bird.png';
 import bgImgSrc from '../assets/background.png';
+import jumpSound from '../sound/jump.mp3';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -121,6 +122,12 @@ export function useFlappyBird(
   const engineRef = useRef<GameEngine>(createEngine(difficulty));
   const birdImageRef = useRef<HTMLImageElement | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
+  const jumpAudioRef = useRef<HTMLAudioElement | null>(null);
+  if (!jumpAudioRef.current && typeof Audio !== 'undefined') {
+    const audio = new Audio(jumpSound);
+    audio.volume = 0.5;
+    jumpAudioRef.current = audio;
+  }
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(START_LIVES);
@@ -1129,6 +1136,13 @@ export function useFlappyBird(
     if (engine.state === 'playing') {
       engine.bird.velocity = engine.config.flapForce;
       engine.bird.flapFrame = 1;
+
+      // Jump sound
+      const audio = jumpAudioRef.current;
+      if (audio) {
+        try { audio.currentTime = 0; } catch { /* ignored */ }
+        audio.play().catch(() => {});
+      }
     }
   };
 
