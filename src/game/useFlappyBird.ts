@@ -23,6 +23,10 @@ import {
   BEST_SCORE_KEY,
   POWERUP_SIZE,
   EFFECT_DURATION,
+  START_LIVES,
+  MAX_LIVES,
+  HEART_BONUS_SCORE,
+  INVINCIBLE_FRAMES,
   getDifficultyConfig,
   type DifficultyLevel,
   type DifficultyConfig,
@@ -37,6 +41,8 @@ interface GameEngine {
   boss: Boss | null;
   fireballs: Fireball[];
   score: number;
+  lives: number;
+  invincible: number;
   frameCount: number;
   groundOffset: number;
   bgScrollX: number;
@@ -55,6 +61,14 @@ function createClouds(): Cloud[] {
   }));
 }
 
+// Pipe color variants (body, dark, light, cap, capDark, stroke)
+const PIPE_PALETTES = [
+  { body: '#5CB85C', dark: '#3D8B3D', light: '#7ED87E', cap: '#4AA84A', capDark: '#367436', stroke: '#2D6B2D' }, // green
+  { body: '#8A9BA8', dark: '#5F6E79', light: '#AFC1CC', cap: '#7B8B96', capDark: '#55646E', stroke: '#46535B' }, // steel
+  { body: '#9A6BB8', dark: '#6F4690', light: '#BB8FD6', cap: '#895FA8', capDark: '#643F80', stroke: '#4F3165' }, // purple
+  { body: '#C29A63', dark: '#97703F', light: '#DDBC8C', cap: '#B08850', capDark: '#86683B', stroke: '#6A4F2C' }, // wood
+];
+
 function createEngine(difficulty: DifficultyLevel): GameEngine {
   return {
     difficulty,
@@ -71,6 +85,8 @@ function createEngine(difficulty: DifficultyLevel): GameEngine {
     boss: null,
     fireballs: [],
     score: 0,
+    lives: START_LIVES,
+    invincible: 0,
     frameCount: 0,
     groundOffset: 0,
     bgScrollX: 0,
@@ -107,6 +123,7 @@ export function useFlappyBird(
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
+  const [lives, setLives] = useState(START_LIVES);
   const [best, setBest] = useState<number>(() => loadBest());
   const [result, setResult] = useState<GameResult | null>(null);
   const [gameOverVisible, setGameOverVisible] = useState(false);
@@ -177,10 +194,27 @@ export function useFlappyBird(
       const minY = 80;
       const maxY = PLAY_HEIGHT - engine.config.pipeGap - 80;
       const topHeight = Math.random() * (maxY - minY) + minY;
+
+      // Variety: random width, random color, and some pipes drift vertically
+      const roll = Math.random();
+      const width = roll < 0.12 ? PIPE_WIDTH + 26
+        : roll < 0.30 ? PIPE_WIDTH - 14
+        : PIPE_WIDTH;
+      const palette = Math.floor(Math.random() * PIPE_PALETTES.length);
+      const moveAmp = Math.random() < 0.26 ? 26 + Math.random() * 26 : 0;
+      const moveFreq = (Math.random() < 0.5 ? -1 : 1) * (0.012 + Math.random() * 0.02);
+      const movePhase = Math.random() * Math.PI * 2;
+
       engine.pipes.push({
-        x: GAME_WIDTH + PIPE_WIDTH,
+        x: GAME_WIDTH + width,
         topHeight,
         bottomY: topHeight + engine.config.pipeGap,
+        width,
+        palette,
+        moveAmp,
+        moveFreq,
+        movePhase,
+        offset: 0,
         scored: false,
       });
     };
@@ -210,8 +244,8 @@ export function useFlappyBird(
 
       // Spawn power-ups
       if (Math.random() < engine.config.powerupChance) {
-        const types: PowerUp['type'][] = ['shield', 'speed', 'multiplier'];
-        const weights = [0.3, 0.4, 0.3];
+        const types: PowerUp['type'][] = ['heart', 'shield', 'speed', 'multiplier'];
+        const weights = [0.25, 0.25, 0.3, 0.2];
         const r = Math.random();
         let cum = 0;
         let chosen: PowerUp['type'] = 'shield';
@@ -233,7 +267,15 @@ export function useFlappyBird(
         const pipe = engine.pipes[i];
         pipe.x -= scrollSpeed;
 
-        if (!pipe.scored && pipe.x + PIPE_WIDTH < engine.bird.x) {
+        // Vertical drift for moving pipes (kept inside the play area)
+        if (pipe.moveAmp > 0) {
+          const off = pipe.moveAmp * Math.sin(engine.frameCount * pipe.moveFreq + pipe.movePhase);
+          pipe.offset = Math.max(-pipe.topHeight, Math.min(off, PLAY_HEIGHT - pipe.bottomY));
+        } else {
+          pipe.offset = 0;
+        }
+
+        if (!pipe.scored && pipe.x + pipe.width < engine.bird.x) {
           pipe.scored = true;
           engine.score += engine.activeEffects.multiplier > 0 ? 2 : 1;
           setScore(engine.score);
@@ -262,7 +304,7 @@ export function useFlappyBird(
           }
         }
 
-        if (pipe.x + PIPE_WIDTH < -10) {
+        if (pipe.x + pipe.width < -10) {
           engine.pipes.splice(i, 1);
         }
       }
@@ -333,18 +375,16 @@ export function useFlappyBird(
       }
 
       // Boss body collision (the resting body is still dangerous)
-      const bx = boss.x - boss.width / 2;
-      const by = boss.y - boss.height / 2;
-      if (
-        engine.bird.x + BIRD_SIZE * 0.38 > bx &&
-        engine.bird.x - BIRD_SIZE * 0.38 < bx + boss.width &&
-        engine.bird.y + BIRD_SIZE * 0.38 > by &&
-        engine.bird.y - BIRD_SIZE * 0.38 < by + boss.height
-      ) {
-        if (engine.activeEffects.shield > 0) {
-          engine.activeEffects.shield = 0; // shield absorbs the bump
-        } else {
-          return true; // signal death
+      if (engine.invincible <= 0) {
+        const bx = boss.x - boss.width / 2;
+        const by = boss.y - boss.height / 2;
+        if (
+          engine.bird.x + BIRD_SIZE * 0.38 > bx &&
+          engine.bird.x - BIRD_SIZE * 0.38 < bx + boss.width &&
+          engine.bird.y + BIRD_SIZE * 0.38 > by &&
+          engine.bird.y - BIRD_SIZE * 0.38 < by + boss.height
+        ) {
+          if (registerHit(engine)) return true;
         }
       }
 
@@ -379,33 +419,44 @@ export function useFlappyBird(
         const dist = Math.hypot(engine.bird.x - fb.x, engine.bird.y - fb.y);
         if (dist < BIRD_SIZE * 0.42 + fb.radius) {
           engine.fireballs.splice(i, 1);
-          if (engine.activeEffects.shield > 0) {
-            engine.activeEffects.shield = 0; // shield absorbs one fireball
-          } else {
-            return true; // signal death
-          }
+          if (engine.invincible > 0) continue; // ghost through while invincible
+          if (registerHit(engine)) return true;
         }
       }
       return false;
     };
 
+    const grantHeart = (engine: GameEngine) => {
+      if (engine.lives < MAX_LIVES) {
+        engine.lives += 1;
+      } else {
+        engine.score += HEART_BONUS_SCORE;
+        setScore(engine.score);
+      }
+      setLives(engine.lives);
+    };
+
+    // A single hit: shield absorbs it, else lose a life (with brief invincibility),
+    // else the last life is gone -> game over.
+    const registerHit = (engine: GameEngine): boolean => {
+      if (engine.activeEffects.shield > 0) {
+        engine.activeEffects.shield = 0;
+        return false;
+      }
+      if (engine.lives > 1) {
+        engine.lives -= 1;
+        engine.invincible = INVINCIBLE_FRAMES;
+        setLives(engine.lives);
+        return false;
+      }
+      die(engine);
+      return true;
+    };
+
     const checkCollision = (engine: GameEngine): boolean => {
       const bird = engine.bird;
-      if (bird.y + BIRD_SIZE * 0.32 > PLAY_HEIGHT || bird.y - BIRD_SIZE * 0.32 < 0) {
-        return true;
-      }
 
-      for (const pipe of engine.pipes) {
-        const bw = BIRD_SIZE * 0.38;
-        const bh = BIRD_SIZE * 0.32;
-
-        if (bird.x + bw > pipe.x && bird.x - bw < pipe.x + PIPE_WIDTH) {
-          if (bird.y - bh < pipe.topHeight) return true;
-          if (bird.y + bh > pipe.bottomY) return true;
-        }
-      }
-
-      // Power-up collision
+      // Power-up collection always works (even while invincible)
       for (const p of engine.powerUps) {
         if (p.collected) continue;
         const dx = bird.x - p.x;
@@ -413,7 +464,29 @@ export function useFlappyBird(
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < BIRD_SIZE * 0.5 + p.radius) {
           p.collected = true;
-          engine.activeEffects[p.type] = EFFECT_DURATION;
+          if (p.type === 'heart') {
+            grantHeart(engine);
+          } else {
+            engine.activeEffects[p.type] = EFFECT_DURATION;
+          }
+        }
+      }
+
+      // Ghost through obstacles while invincible (post-hit protection)
+      if (engine.invincible > 0) return false;
+
+      const bw = BIRD_SIZE * 0.38;
+      const bh = BIRD_SIZE * 0.32;
+
+      // Ground / ceiling
+      if (bird.y + bh > PLAY_HEIGHT || bird.y - bh < 0) {
+        return true;
+      }
+
+      for (const pipe of engine.pipes) {
+        if (bird.x + bw > pipe.x && bird.x - bw < pipe.x + pipe.width) {
+          if (bird.y - bh < pipe.topHeight + pipe.offset) return true;
+          if (bird.y + bh > pipe.bottomY + pipe.offset) return true;
         }
       }
 
@@ -527,49 +600,45 @@ export function useFlappyBird(
       }
     };
 
-    const drawPipe = (x: number, topH: number, bottomY: number) => {
-      const bodyColor = '#5CB85C';
-      const darkColor = '#3D8B3D';
-      const lightColor = '#7ED87E';
-      const capColor = '#4AA84A';
-      const capDark = '#367436';
+    const drawPipe = (x: number, topH: number, bottomY: number, width: number, paletteIdx: number) => {
+      const pal = PIPE_PALETTES[paletteIdx % PIPE_PALETTES.length];
       const capH = 28;
-      const capW = PIPE_WIDTH + 12;
+      const capW = width + 12;
       const capX = x - 6;
 
       // Top pipe
-      ctx.fillStyle = bodyColor;
-      ctx.fillRect(x, 0, PIPE_WIDTH, topH);
-      ctx.fillStyle = lightColor;
+      ctx.fillStyle = pal.body;
+      ctx.fillRect(x, 0, width, topH);
+      ctx.fillStyle = pal.light;
       ctx.fillRect(x, 0, 6, topH);
-      ctx.fillStyle = darkColor;
-      ctx.fillRect(x + PIPE_WIDTH - 6, 0, 6, topH);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(x + width - 6, 0, 6, topH);
 
-      ctx.fillStyle = capColor;
+      ctx.fillStyle = pal.cap;
       ctx.fillRect(capX, topH - capH, capW, capH);
-      ctx.fillStyle = lightColor;
+      ctx.fillStyle = pal.light;
       ctx.fillRect(capX, topH - capH, 6, capH);
-      ctx.fillStyle = capDark;
+      ctx.fillStyle = pal.capDark;
       ctx.fillRect(capX + capW - 6, topH - capH, 6, capH);
-      ctx.strokeStyle = '#2D6B2D';
+      ctx.strokeStyle = pal.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(capX, topH - capH, capW, capH);
 
       // Bottom pipe
-      ctx.fillStyle = bodyColor;
-      ctx.fillRect(x, bottomY, PIPE_WIDTH, PLAY_HEIGHT - bottomY);
-      ctx.fillStyle = lightColor;
+      ctx.fillStyle = pal.body;
+      ctx.fillRect(x, bottomY, width, PLAY_HEIGHT - bottomY);
+      ctx.fillStyle = pal.light;
       ctx.fillRect(x, bottomY, 6, PLAY_HEIGHT - bottomY);
-      ctx.fillStyle = darkColor;
-      ctx.fillRect(x + PIPE_WIDTH - 6, bottomY, 6, PLAY_HEIGHT - bottomY);
+      ctx.fillStyle = pal.dark;
+      ctx.fillRect(x + width - 6, bottomY, 6, PLAY_HEIGHT - bottomY);
 
-      ctx.fillStyle = capColor;
+      ctx.fillStyle = pal.cap;
       ctx.fillRect(capX, bottomY, capW, capH);
-      ctx.fillStyle = lightColor;
+      ctx.fillStyle = pal.light;
       ctx.fillRect(capX, bottomY, 6, capH);
-      ctx.fillStyle = capDark;
+      ctx.fillStyle = pal.capDark;
       ctx.fillRect(capX + capW - 6, bottomY, 6, capH);
-      ctx.strokeStyle = '#2D6B2D';
+      ctx.strokeStyle = pal.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(capX, bottomY, capW, capH);
     };
@@ -612,11 +681,13 @@ export function useFlappyBird(
       }
 
       const img = birdImageRef.current;
-      if (img && img.complete && img.naturalWidth > 0) {
+      // Blink while invincible (flash effect after taking a hit)
+      const flicker = engine.invincible > 0 && Math.floor(engine.frameCount / 4) % 2 === 0;
+      if (!flicker && img && img.complete && img.naturalWidth > 0) {
         const drawW = BIRD_SIZE * 1.35;
         const drawH = BIRD_SIZE * 1.35;
         ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
-      } else {
+      } else if (!flicker) {
         ctx.fillStyle = '#F5C842';
         ctx.beginPath();
         ctx.arc(0, 0, BIRD_SIZE * 0.45, 0, Math.PI * 2);
@@ -638,6 +709,7 @@ export function useFlappyBird(
         shield: { main: '#64B5F6', glow: 'rgba(100,181,246,', label: '🛡️' },
         speed: { main: '#FFD54F', glow: 'rgba(255,213,79,', label: '⚡' },
         multiplier: { main: '#CE93D8', glow: 'rgba(206,147,216,', label: '✨' },
+        heart: { main: '#F06292', glow: 'rgba(240,98,146,', label: '💗' },
       };
       const c = colors[p.type];
 
@@ -884,6 +956,7 @@ export function useFlappyBird(
 
     const frame = () => {
       const engine = engineRef.current;
+      if (engine.state === 'playing' && engine.invincible > 0) engine.invincible--;
       updateBird(engine);
       updatePipes(engine);
 
@@ -907,12 +980,7 @@ export function useFlappyBird(
       // (pipes/power-ups are cleared during the boss, so this just checks ground/ceiling then)
       if (engine.state === 'playing') {
         if (checkCollision(engine)) {
-          if (engine.activeEffects.shield > 0) {
-            // Shield absorbs one hit — lose shield
-            engine.activeEffects.shield = 0;
-          } else {
-            die(engine);
-          }
+          registerHit(engine);
         }
       }
 
@@ -928,7 +996,9 @@ export function useFlappyBird(
         drawBoss(engine.boss, engine.frameCount);
       }
 
-      engine.pipes.forEach((p) => drawPipe(p.x, p.topHeight, p.bottomY));
+      engine.pipes.forEach((p) =>
+        drawPipe(p.x, p.topHeight + p.offset, p.bottomY + p.offset, p.width, p.palette),
+      );
       engine.fireballs.forEach((fb) => drawFireball(fb, engine.frameCount));
       engine.powerUps.forEach((p) => drawPowerUp(p, engine.frameCount));
 
@@ -971,6 +1041,7 @@ export function useFlappyBird(
     stateRef.current = 'playing';
     setGameState('playing');
     setScore(0);
+    setLives(START_LIVES);
     setResult(null);
     setGameOverVisible(false);
   };
@@ -990,6 +1061,7 @@ export function useFlappyBird(
     stateRef.current = 'idle';
     setGameState('idle');
     setScore(0);
+    setLives(START_LIVES);
     setResult(null);
     setGameOverVisible(false);
   };
@@ -997,6 +1069,7 @@ export function useFlappyBird(
   return {
     gameState,
     score,
+    lives,
     best,
     result,
     gameOverVisible,

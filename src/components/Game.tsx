@@ -15,11 +15,14 @@ export function Game({ onPlay }: GameProps) {
       return saved === 'easy' || saved === 'medium' || saved === 'hard' ? saved : 'easy';
     },
   );
-  const { gameState, score, best, result, gameOverVisible, startGame, restartGame, flap, backToMenu } =
+  const { gameState, score, lives, best, result, gameOverVisible, startGame, restartGame, flap, backToMenu } =
     useFlappyBird(canvasRef, difficulty);
 
   const playing = gameState === 'playing';
   const idle = gameState === 'idle';
+
+  const livesFull = Math.min(lives, 5);
+  const livesEmpty = Math.max(0, 5 - lives);
 
   const handleSelect = (level: DifficultyLevel) => {
     localStorage.setItem('flappyDifficulty', level);
@@ -73,7 +76,15 @@ export function Game({ onPlay }: GameProps) {
         style={{ borderRadius: 0 }}
       />
 
-      {playing && <div className="score-display">{score}</div>}
+      {playing && (
+        <div className="hud">
+          <div className="lives-display" aria-label={`Lives: ${lives}`}>
+            <span className="lives-full">{'♥'.repeat(livesFull)}</span>
+            <span className="lives-empty">{'♡'.repeat(livesEmpty)}</span>
+          </div>
+          <div className="score-display">{score}</div>
+        </div>
+      )}
 
       {idle && (
         <div className="overlay">

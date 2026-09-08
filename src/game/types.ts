@@ -10,6 +10,12 @@ export interface Pipe {
   x: number;
   topHeight: number;
   bottomY: number;
+  width: number;
+  palette: number;    // index into the pipe color palettes
+  moveAmp: number;    // 0 = static; vertical oscillation amplitude
+  moveFreq: number;
+  movePhase: number;
+  offset: number;     // current vertical shift (recomputed each frame)
   scored: boolean;
 }
 
@@ -25,7 +31,7 @@ export interface PowerUp {
   x: number;
   y: number;
   radius: number;
-  type: 'shield' | 'speed' | 'multiplier';
+  type: 'shield' | 'speed' | 'multiplier' | 'heart';
   collected: boolean;
 }
 

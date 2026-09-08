@@ -38,6 +38,29 @@
   z-index: 10;
 }
 
+.lives-display {
+  position: absolute;
+  top: 4%;
+  left: 3%;
+  font-size: clamp(20px, 5vmin, 36px);
+  letter-spacing: 3px;
+  pointer-events: none;
+  z-index: 10;
+  text-shadow:
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000;
+}
+
+.lives-display .lives-full {
+  color: #ff4d6d;
+}
+
+.lives-display .lives-empty {
+  color: rgba(255, 255, 255, 0.3);
+}
+
 .overlay {
   position: absolute;
   inset: 0;
