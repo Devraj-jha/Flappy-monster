@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { Bird, GameState, Pipe, GameResult } from './types';
+import birdImgSrc from '../assets/bird.png';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -62,6 +63,7 @@ function medalFor(score: number): GameResult['medal'] {
 
 export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
   const engineRef = useRef<GameEngine>(createEngine());
+  const birdImageRef = useRef<HTMLImageElement | null>(null);
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
   const [best, setBest] = useState<number>(() => loadBest());
@@ -97,6 +99,15 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, [canvasRef]);
+
+  // ---------- Load bird image ----------
+  useEffect(() => {
+    const img = new Image();
+    img.src = birdImgSrc;
+    img.onload = () => {
+      birdImageRef.current = img;
+    };
+  }, []);
 
   // ---------- Game loop ----------
   useEffect(() => {
@@ -312,51 +323,23 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
 
     const drawBird = (engine: GameEngine) => {
       const bird = engine.bird;
-      const s = BIRD_SIZE;
       ctx.save();
       ctx.translate(bird.x, bird.y);
       ctx.rotate((bird.rotation * Math.PI) / 180);
 
-      ctx.fillStyle = '#F5C842';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, s * 0.6, s * 0.45, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#C8960A';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.fillStyle = '#E8A020';
-      ctx.beginPath();
-      const wingY = bird.flapFrame > 0 ? -6 - bird.flapFrame * 4 : 4;
-      ctx.ellipse(-4, wingY, s * 0.38, s * 0.22, -0.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#C8960A';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(s * 0.25, -s * 0.12, s * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      ctx.fillStyle = '#000';
-      ctx.beginPath();
-      ctx.arc(s * 0.3, -s * 0.12, s * 0.09, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#FF8C00';
-      ctx.beginPath();
-      ctx.moveTo(s * 0.38, -s * 0.02);
-      ctx.lineTo(s * 0.75, s * 0.05);
-      ctx.lineTo(s * 0.38, s * 0.14);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#CC6600';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      const img = birdImageRef.current;
+      if (img && img.complete && img.naturalWidth > 0) {
+        // Scale the 728x724 source to fit BIRD_SIZE (34px)
+        const drawW = BIRD_SIZE * 1.2;
+        const drawH = BIRD_SIZE * 1.2;
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+      } else {
+        // Fallback: yellow circle while image loads
+        ctx.fillStyle = '#F5C842';
+        ctx.beginPath();
+        ctx.arc(0, 0, BIRD_SIZE * 0.45, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       ctx.restore();
     };
