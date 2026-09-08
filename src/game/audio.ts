@@ -50,7 +50,7 @@ class MusicPlayer {
   private step = 0;
 
   playing = false;
-  volume = 0.4;
+  volume = 0.5;
   enabled = true;
 
   private ensureCtx(): AudioContext | null {
@@ -167,7 +167,7 @@ export const audio = {
 
   // Initialise stored settings on load
   init() {
-    this.music.volume = readNum(MUSIC_VOL_KEY, 0.4);
+    this.music.volume = readNum(MUSIC_VOL_KEY, 0.5);
     this.music.enabled = readBool(MUSIC_ON_KEY, true);
     this.sfx.volume = readNum(SFX_VOL_KEY, 1);
   },

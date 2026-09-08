@@ -29,7 +29,11 @@ export function Game({ onPlay }: GameProps) {
   // Settings panel state
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [musicVol, setMusicVol] = useState<number>(() => {
-    try { return Number(localStorage.getItem('flappyMusicVol')) || 0.4; } catch { return 0.4; }
+    try {
+      const saved = localStorage.getItem('flappyMusicVol');
+      const v = saved === null ? 0.5 : Number(saved);
+      return Number.isFinite(v) ? v : 0.5;
+    } catch { return 0.5; }
   });
   const [sfxVol, setSfxVol] = useState<number>(() => {
     try {

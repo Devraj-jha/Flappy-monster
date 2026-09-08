@@ -31,7 +31,7 @@ export interface PowerUp {
   x: number;
   y: number;
   radius: number;
-  type: 'shield' | 'speed' | 'multiplier' | 'heart' | 'invisible';
+  type: 'speed' | 'heart' | 'invisible';
   collected: boolean;
 }
 
@@ -58,9 +58,7 @@ export interface Fireball {
 }
 
 export interface ActiveEffects {
-  shield: number;
   speed: number;
-  multiplier: number;
   invisible: number;
 }
 

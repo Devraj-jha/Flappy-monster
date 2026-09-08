@@ -100,7 +100,7 @@ function createEngine(difficulty: DifficultyLevel): GameEngine {
     groundOffset: 0,
     bgScrollX: 0,
     clouds: createClouds(),
-    activeEffects: { shield: 0, speed: 0, multiplier: 0, invisible: 0 },
+    activeEffects: { speed: 0, invisible: 0 },
     heartParticles: [],
     state: 'idle',
   };
@@ -193,12 +193,13 @@ export function useFlappyBird(
         const offCtx = c.getContext('2d');
         if (offCtx) {
           offCtx.drawImage(img, 0, 0);
-          // m3.gif (beam) has an opaque gray background — remove it
+          // m3.gif (beam) has an opaque gray background — remove it (±8 range)
           if (key === 'beam') {
             const imageData = offCtx.getImageData(0, 0, c.width, c.height);
             const d = imageData.data;
             for (let i = 0; i < d.length; i += 4) {
-              if (d[i] === 192 && d[i + 1] === 192 && d[i + 2] === 192) {
+              const r = d[i], g = d[i + 1], b = d[i + 2];
+              if (Math.abs(r - 192) <= 8 && Math.abs(g - 192) <= 8 && Math.abs(b - 192) <= 8) {
                 d[i + 3] = 0;
               }
             }
@@ -287,9 +288,7 @@ export function useFlappyBird(
       engine.frameCount++;
 
       // Update active effects
-      if (engine.activeEffects.shield > 0) engine.activeEffects.shield--;
       if (engine.activeEffects.speed > 0) engine.activeEffects.speed--;
-      if (engine.activeEffects.multiplier > 0) engine.activeEffects.multiplier--;
       if (engine.activeEffects.invisible > 0) engine.activeEffects.invisible--;
 
       const speedMult = engine.activeEffects.speed > 0 ? 1.5 : 1;
@@ -306,11 +305,11 @@ export function useFlappyBird(
 
       // Spawn power-ups
       if (Math.random() < engine.config.powerupChance) {
-        const types: PowerUp['type'][] = ['heart', 'shield', 'speed', 'multiplier', 'invisible'];
-        const weights = [0.22, 0.16, 0.24, 0.14, 0.22];
+        const types: PowerUp['type'][] = ['heart', 'speed', 'invisible'];
+        const weights = [0.32, 0.36, 0.32];
         const r = Math.random();
         let cum = 0;
-        let chosen: PowerUp['type'] = 'shield';
+        let chosen: PowerUp['type'] = 'heart';
         for (let i = 0; i < types.length; i++) {
           cum += weights[i];
           if (r < cum) { chosen = types[i]; break; }
@@ -339,7 +338,7 @@ export function useFlappyBird(
 
         if (!pipe.scored && pipe.x + pipe.width < engine.bird.x) {
           pipe.scored = true;
-          engine.score += engine.activeEffects.multiplier > 0 ? 2 : 1;
+          engine.score += 1;
           setScore(engine.score);
 
           // Trigger boss on the interval (0 = bosses disabled)
@@ -530,14 +529,9 @@ export function useFlappyBird(
       setLives(engine.lives);
     };
 
-    // A single hit: shield absorbs it, else lose a heart (with brief invincibility),
-    // else the last heart is gone -> game over.
+    // A single hit: lose a heart (with brief invincibility), else the last
+    // heart is gone -> game over.
     const registerHit = (engine: GameEngine): boolean => {
-      if (engine.activeEffects.shield > 0) {
-        engine.activeEffects.shield = 0;
-        engine.invincible = INVINCIBLE_FRAMES;
-        return false;
-      }
       if (engine.lives > 0) {
         engine.lives -= 1;
         engine.invincible = INVINCIBLE_FRAMES;
@@ -753,22 +747,6 @@ export function useFlappyBird(
       ctx.rotate((bird.rotation * Math.PI) / 180);
       if (engine.activeEffects.invisible > 0) ctx.globalAlpha = 0.35;
 
-      // Shield aura
-      if (engine.activeEffects.shield > 0) {
-        ctx.save();
-        ctx.rotate(-(bird.rotation * Math.PI) / 180);
-        const pulse = Math.sin(engine.frameCount * 0.15) * 4 + 24;
-        ctx.fillStyle = `rgba(100, 180, 255, ${0.25 + Math.sin(engine.frameCount * 0.1) * 0.1})`;
-        ctx.beginPath();
-        ctx.arc(0, 0, pulse, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = `rgba(140, 210, 255, ${0.5 + Math.sin(engine.frameCount * 0.12) * 0.2})`;
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        ctx.restore();
-        ctx.rotate((bird.rotation * Math.PI) / 180);
-      }
-
       // Speed trail
       if (engine.activeEffects.speed > 0) {
         ctx.save();
@@ -809,9 +787,7 @@ export function useFlappyBird(
       ctx.translate(p.x, p.y + floatY);
 
       const colors: Record<PowerUp['type'], { main: string; glow: string; label: string }> = {
-        shield: { main: '#64B5F6', glow: 'rgba(100,181,246,', label: '🛡️' },
         speed: { main: '#FFD54F', glow: 'rgba(255,213,79,', label: '⚡' },
-        multiplier: { main: '#CE93D8', glow: 'rgba(206,147,216,', label: '✨' },
         heart: { main: '#F06292', glow: 'rgba(240,98,146,', label: '💗' },
         invisible: { main: '#B0BEC5', glow: 'rgba(176,190,197,', label: '👻' },
       };
@@ -874,7 +850,8 @@ export function useFlappyBird(
       const drawH = boss.height * 1.8;
 
       if (bossCanvas) {
-        // Pre-cleaned canvas — draw directly
+        // Flip horizontally so boss faces LEFT (toward the bird)
+        ctx.scale(-1, 1);
         ctx.drawImage(bossCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
       } else {
         // Fallback: procedural boss if image not loaded
@@ -975,18 +952,6 @@ export function useFlappyBird(
       let indicatorY = 10;
       const indicatorX = 10;
 
-      if (engine.activeEffects.shield > 0) {
-        const secs = Math.ceil(engine.activeEffects.shield / 60);
-        ctx.fillStyle = 'rgba(100, 181, 246, 0.7)';
-        ctx.fillRect(indicatorX, indicatorY, 60, 22);
-        ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`🛡 ${secs}s`, indicatorX + 4, indicatorY + 11);
-        indicatorY += 26;
-      }
-
       if (engine.activeEffects.speed > 0) {
         const secs = Math.ceil(engine.activeEffects.speed / 60);
         ctx.fillStyle = 'rgba(255, 213, 79, 0.7)';
@@ -996,18 +961,6 @@ export function useFlappyBird(
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(`⚡ ${secs}s`, indicatorX + 4, indicatorY + 11);
-        indicatorY += 26;
-      }
-
-      if (engine.activeEffects.multiplier > 0) {
-        const secs = Math.ceil(engine.activeEffects.multiplier / 60);
-        ctx.fillStyle = 'rgba(206, 147, 216, 0.7)';
-        ctx.fillRect(indicatorX, indicatorY, 70, 22);
-        ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`✨x2 ${secs}s`, indicatorX + 4, indicatorY + 11);
         indicatorY += 26;
       }
 
