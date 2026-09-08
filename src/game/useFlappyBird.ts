@@ -91,7 +91,7 @@ function createEngine(difficulty: DifficultyLevel): GameEngine {
     groundOffset: 0,
     bgScrollX: 0,
     clouds: createClouds(),
-    activeEffects: { shield: 0, speed: 0, multiplier: 0 },
+    activeEffects: { shield: 0, speed: 0, multiplier: 0, invisible: 0 },
     state: 'idle',
   };
 }
@@ -229,6 +229,7 @@ export function useFlappyBird(
       if (engine.activeEffects.shield > 0) engine.activeEffects.shield--;
       if (engine.activeEffects.speed > 0) engine.activeEffects.speed--;
       if (engine.activeEffects.multiplier > 0) engine.activeEffects.multiplier--;
+      if (engine.activeEffects.invisible > 0) engine.activeEffects.invisible--;
 
       const speedMult = engine.activeEffects.speed > 0 ? 1.5 : 1;
 
@@ -244,8 +245,8 @@ export function useFlappyBird(
 
       // Spawn power-ups
       if (Math.random() < engine.config.powerupChance) {
-        const types: PowerUp['type'][] = ['heart', 'shield', 'speed', 'multiplier'];
-        const weights = [0.25, 0.25, 0.3, 0.2];
+        const types: PowerUp['type'][] = ['heart', 'shield', 'speed', 'multiplier', 'invisible'];
+        const weights = [0.22, 0.16, 0.24, 0.14, 0.22];
         const r = Math.random();
         let cum = 0;
         let chosen: PowerUp['type'] = 'shield';
@@ -290,11 +291,13 @@ export function useFlappyBird(
             engine.pipes = [];
             engine.powerUps = [];
             engine.fireballs = [];
+            const bossTypes: Boss['type'][] = ['fire', 'wave', 'beam'];
             engine.boss = {
               x: GAME_WIDTH + 180,
               y: GAME_HEIGHT / 2 - 40,
               width: 110,
               height: 80,
+              type: bossTypes[Math.floor(Math.random() * bossTypes.length)],
               targetX: GAME_WIDTH * 0.68,
               targetY: GAME_HEIGHT * 0.3,
               moveTimer: 0,
@@ -342,25 +345,45 @@ export function useFlappyBird(
         if (Math.abs(boss.x - boss.targetX) < 2) boss.x = boss.targetX;
       }
 
-      // FIGHT: stationary at the arena slot, bobbing, throwing fireballs
+      // FIGHT: stationary at the arena slot, bobbing, executing its attack pattern
       if (!boss.leaving && boss.moveTimer >= 80 && boss.moveTimer < 330) {
         boss.y = boss.targetY + Math.sin(boss.moveTimer * 0.05) * 14;
 
         boss.shootTimer--;
         if (boss.shootTimer <= 0) {
-          const count = Math.random() < 0.5 ? 1 : 2; // 1-2 fireballs per burst
-          for (let i = 0; i < count; i++) {
-            const spread = (i - (count - 1) / 2) * 0.18;
-            const ang = Math.atan2(
-              engine.bird.y - boss.y,
-              engine.bird.x - boss.x,
-            ) + spread;
+          if (boss.type === 'fire') {
+            // 1-2 aimed fireballs
+            const count = Math.random() < 0.5 ? 1 : 2;
+            for (let i = 0; i < count; i++) {
+              const spread = (i - (count - 1) / 2) * 0.18;
+              const ang = Math.atan2(engine.bird.y - boss.y, engine.bird.x - boss.x) + spread;
+              engine.fireballs.push({
+                x: boss.x, y: boss.y,
+                vx: Math.cos(ang) * 4.4, vy: Math.sin(ang) * 4.4,
+                radius: 13, kind: 'ball',
+              });
+            }
+          } else if (boss.type === 'wave') {
+            // fan of fireballs you must fly through
+            const count = 5;
+            for (let i = 0; i < count; i++) {
+              const spread = (i / (count - 1) - 0.5) * 0.95;
+              const ang = Math.atan2(engine.bird.y - boss.y, engine.bird.x - boss.x) + spread;
+              engine.fireballs.push({
+                x: boss.x, y: boss.y,
+                vx: Math.cos(ang) * 3.8, vy: Math.sin(ang) * 3.8,
+                radius: 12, kind: 'ball',
+              });
+            }
+          } else {
+            // beam: a fast vertical laser that sweeps across at the bird's height
             engine.fireballs.push({
               x: boss.x,
-              y: boss.y,
-              vx: Math.cos(ang) * 4.4,
-              vy: Math.sin(ang) * 4.4,
-              radius: 13,
+              y: engine.bird.y,
+              vx: -7,
+              vy: 0,
+              radius: 46, // half-height of the laser
+              kind: 'beam',
             });
           }
           boss.shootTimer = 58 + Math.floor(Math.random() * 28);
@@ -416,8 +439,18 @@ export function useFlappyBird(
         }
 
         // Fireball vs bird
-        const dist = Math.hypot(engine.bird.x - fb.x, engine.bird.y - fb.y);
-        if (dist < BIRD_SIZE * 0.42 + fb.radius) {
+        let hit = false;
+        if (fb.kind === 'beam') {
+          // vertical laser bar (wide height, thin width)
+          const halfW = 16 + BIRD_SIZE * 0.42;
+          const halfH = fb.radius + BIRD_SIZE * 0.42;
+          hit = Math.abs(engine.bird.x - fb.x) < halfW &&
+                Math.abs(engine.bird.y - fb.y) < halfH;
+        } else {
+          const dist = Math.hypot(engine.bird.x - fb.x, engine.bird.y - fb.y);
+          hit = dist < BIRD_SIZE * 0.42 + fb.radius;
+        }
+        if (hit) {
           engine.fireballs.splice(i, 1);
           if (engine.invincible > 0) continue; // ghost through while invincible
           if (registerHit(engine)) return true;
@@ -472,8 +505,8 @@ export function useFlappyBird(
         }
       }
 
-      // Ghost through obstacles while invincible (post-hit protection)
-      if (engine.invincible > 0) return false;
+      // Ghost through obstacles while invincible (post-hit) or invisible (power-up)
+      if (engine.invincible > 0 || engine.activeEffects.invisible > 0) return false;
 
       const bw = BIRD_SIZE * 0.38;
       const bh = BIRD_SIZE * 0.32;
@@ -648,6 +681,7 @@ export function useFlappyBird(
       ctx.save();
       ctx.translate(bird.x, bird.y);
       ctx.rotate((bird.rotation * Math.PI) / 180);
+      if (engine.activeEffects.invisible > 0) ctx.globalAlpha = 0.35;
 
       // Shield aura
       if (engine.activeEffects.shield > 0) {
@@ -710,6 +744,7 @@ export function useFlappyBird(
         speed: { main: '#FFD54F', glow: 'rgba(255,213,79,', label: '⚡' },
         multiplier: { main: '#CE93D8', glow: 'rgba(206,147,216,', label: '✨' },
         heart: { main: '#F06292', glow: 'rgba(240,98,146,', label: '💗' },
+        invisible: { main: '#B0BEC5', glow: 'rgba(176,190,197,', label: '👻' },
       };
       const c = colors[p.type];
 
@@ -746,13 +781,19 @@ export function useFlappyBird(
     };
 
     const drawBoss = (boss: Boss, frameCount: number) => {
+      const pal = {
+        fire: { body: '#C62828', dark: '#8B1A1A', pupil: '#FF0000' },
+        wave: { body: '#8E44AD', dark: '#5B2C6F', pupil: '#00E5FF' },
+        beam: { body: '#1F7A9E', dark: '#11465E', pupil: '#FFE033' },
+      }[boss.type];
+
       const bx = boss.x - boss.width / 2;
       const by = boss.y - boss.height / 2;
 
       ctx.save();
 
       // Spiky outline
-      ctx.fillStyle = '#8B1A1A';
+      ctx.fillStyle = pal.dark;
       const spikes = 8;
       ctx.beginPath();
       for (let i = 0; i < spikes; i++) {
@@ -770,13 +811,13 @@ export function useFlappyBird(
       ctx.fill();
 
       // Main body
-      ctx.fillStyle = '#C62828';
+      ctx.fillStyle = pal.body;
       ctx.beginPath();
       ctx.ellipse(boss.x, boss.y, boss.width * 0.45, boss.height * 0.45, 0, 0, Math.PI * 2);
       ctx.fill();
 
       // Darker body detail
-      ctx.fillStyle = '#8B1A1A';
+      ctx.fillStyle = pal.dark;
       ctx.beginPath();
       ctx.ellipse(boss.x, boss.y + 8, boss.width * 0.35, boss.height * 0.28, 0, 0, Math.PI * 2);
       ctx.fill();
@@ -816,7 +857,7 @@ export function useFlappyBird(
       ctx.fill();
 
       // Pupils (follow bird slightly)
-      ctx.fillStyle = '#FF0000';
+      ctx.fillStyle = pal.pupil;
       ctx.shadowColor = '#FF0000';
       ctx.shadowBlur = 8;
       ctx.beginPath();
@@ -832,6 +873,20 @@ export function useFlappyBird(
 
     const drawFireball = (fb: Fireball, frameCount: number) => {
       ctx.save();
+
+      // Vertical laser bar (beam) streaming to the left
+      if (fb.kind === 'beam') {
+        ctx.shadowColor = '#FF2D2D';
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = 'rgba(255, 40, 40, 0.85)';
+        ctx.fillRect(fb.x - 10, fb.y - fb.radius, 20, fb.radius * 2);
+        ctx.fillStyle = 'rgba(255, 170, 110, 0.95)';
+        ctx.fillRect(fb.x - 4, fb.y - fb.radius, 8, fb.radius * 2);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(fb.x - 1, fb.y - fb.radius, 3, fb.radius * 2);
+        ctx.restore();
+        return;
+      }
 
       // Flame glow
       ctx.shadowColor = '#FF4500';
@@ -885,6 +940,17 @@ export function useFlappyBird(
       ctx.fillStyle = '#FFF';
       ctx.fillText('GET READY!', GAME_WIDTH / 2, PLAY_HEIGHT / 2 + 10);
 
+      if (engine.boss) {
+        const names: Record<Boss['type'], string> = {
+          fire: 'FIREBALLS',
+          wave: 'WAVE SHOTS',
+          beam: 'LASER SWEEP',
+        };
+        ctx.font = 'bold 20px monospace';
+        ctx.fillStyle = '#FFF15A';
+        ctx.fillText(names[engine.boss.type], GAME_WIDTH / 2, PLAY_HEIGHT / 2 + 38);
+      }
+
       ctx.restore();
     };
 
@@ -926,6 +992,18 @@ export function useFlappyBird(
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText(`✨x2 ${secs}s`, indicatorX + 4, indicatorY + 11);
+        indicatorY += 26;
+      }
+
+      if (engine.activeEffects.invisible > 0) {
+        const secs = Math.ceil(engine.activeEffects.invisible / 60);
+        ctx.fillStyle = 'rgba(176, 190, 197, 0.7)';
+        ctx.fillRect(indicatorX, indicatorY, 70, 22);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`👻 ${secs}s`, indicatorX + 4, indicatorY + 11);
         indicatorY += 26;
       }
 

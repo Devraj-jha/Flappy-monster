@@ -11,7 +11,7 @@ export const POWERUP_SIZE = 22;
 export const EFFECT_DURATION = 360; // 6 seconds at 60fps
 export const BOSS_WARNING_FRAMES = 90; // 1.5s warning
 
-export const START_LIVES = 3;
+export const START_LIVES = 0;   // hearts only come from heart portions
 export const MAX_LIVES = 5;
 export const HEART_BONUS_SCORE = 4;   // points when at max lives
 export const INVINCIBLE_FRAMES = 90;  // 1.5s post-hit protection (60fps)
