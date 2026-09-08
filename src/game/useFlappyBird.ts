@@ -20,6 +20,7 @@ import heartImgSrc from '../assets/heart.png';
 import speedImgSrc from '../assets/speed.png';
 import invisibleImgSrc from '../assets/invisible.png';
 import bgImgSrc from '../assets/background.png';
+import { loadGifClip, type GifClip } from './gifFrames';
 import { audio } from './audio';
 import {
   GAME_WIDTH,
@@ -134,7 +135,9 @@ export function useFlappyBird(
   const heartImageRef = useRef<HTMLImageElement | null>(null);
   const speedImageRef = useRef<HTMLImageElement | null>(null);
   const invisibleImageRef = useRef<HTMLImageElement | null>(null);
-  const bossImagesRef = useRef<Record<Boss['type'], HTMLCanvasElement | null>>({ fire: null, wave: null, beam: null });
+  const bossImagesRef = useRef<Record<Boss['type'], GifClip | null>>({ fire: null, wave: null, beam: null });
+  // Animation progress for the currently-displayed boss (reset on type change).
+  const bossAnimRef = useRef<{ type: Boss['type'] | null; frame: number; acc: number }>({ type: null, frame: 0, acc: 0 });
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(START_LIVES);
@@ -178,36 +181,15 @@ export function useFlappyBird(
     birdImg.onload = () => { birdImageRef.current = birdImg; };
 
     // Boss sprites (fire, wave, beam) — pre-cleaned into canvases
-    const bossMap: { key: Boss['type']; src: string }[] = [
+    const bossMap: { key: Boss['type']; src: string; removeGray?: boolean }[] = [
       { key: 'fire', src: m1ImgSrc },
       { key: 'wave', src: m2ImgSrc },
-      { key: 'beam', src: m3ImgSrc },
+      { key: 'beam', src: m3ImgSrc, removeGray: true },
     ];
-    for (const { key, src } of bossMap) {
-      const img = new Image();
-      img.src = src;
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = img.naturalWidth;
-        c.height = img.naturalHeight;
-        const offCtx = c.getContext('2d');
-        if (offCtx) {
-          offCtx.drawImage(img, 0, 0);
-          // m3.gif (beam) has an opaque gray background — remove it (±8 range)
-          if (key === 'beam') {
-            const imageData = offCtx.getImageData(0, 0, c.width, c.height);
-            const d = imageData.data;
-            for (let i = 0; i < d.length; i += 4) {
-              const r = d[i], g = d[i + 1], b = d[i + 2];
-              if (Math.abs(r - 192) <= 8 && Math.abs(g - 192) <= 8 && Math.abs(b - 192) <= 8) {
-                d[i + 3] = 0;
-              }
-            }
-            offCtx.putImageData(imageData, 0, 0);
-          }
-        }
-        bossImagesRef.current[key] = c;
-      };
+    for (const { key, src, removeGray } of bossMap) {
+      loadGifClip(src, { removeGray }).then((clip) => {
+        if (clip) bossImagesRef.current[key] = clip;
+      });
     }
 
     // Power-up orb images
@@ -393,10 +375,30 @@ export function useFlappyBird(
       }
     };
 
+    // Advance the boss GIF animation (reset when a different type shows up).
+    const advanceBossAnim = (type: Boss['type']) => {
+      const anim = bossAnimRef.current;
+      const clip = bossImagesRef.current[type];
+      if (!clip || clip.frames.length === 0) return;
+      if (anim.type !== type) {
+        anim.type = type;
+        anim.frame = 0;
+        anim.acc = 0;
+      }
+      // advance by whole frames at ~60fps, matching this game's fixed timestep
+      const framesThisStep = Math.max(1, Math.round(clip.frames[anim.frame].delay / (1000 / 60)));
+      anim.acc += 1;
+      if (anim.acc >= framesThisStep) {
+        anim.acc = 0;
+        anim.frame = (anim.frame + 1) % clip.frames.length;
+      }
+    };
+
     const updateBoss = (engine: GameEngine): boolean => {
       const boss = engine.boss;
       if (!boss || engine.state !== 'playing') return false;
 
+      advanceBossAnim(boss.type);
       boss.moveTimer++;
 
       // ENTER: fly in from the right to the arena slot
@@ -838,7 +840,7 @@ export function useFlappyBird(
     };
 
     const drawBoss = (boss: Boss, frameCount: number) => {
-      const bossCanvas = bossImagesRef.current[boss.type];
+      const clip = bossImagesRef.current[boss.type];
       ctx.save();
       ctx.translate(boss.x, boss.y);
 
@@ -849,12 +851,20 @@ export function useFlappyBird(
       const drawW = boss.width * 1.8;
       const drawH = boss.height * 1.8;
 
-      if (bossCanvas) {
+      if (clip && clip.frames.length > 0) {
+        // Current animated frame for this type
+        const anim = bossAnimRef.current;
+        const frameIdx =
+          anim.type === boss.type
+            ? Math.min(anim.frame, clip.frames.length - 1)
+            : 0;
+        const frameCanvas = clip.frames[frameIdx].canvas;
+
         // Flip horizontally so boss faces LEFT (toward the bird)
         ctx.scale(-1, 1);
-        ctx.drawImage(bossCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.drawImage(frameCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
       } else {
-        // Fallback: procedural boss if image not loaded
+        // Fallback: procedural boss if frames not decoded yet
         ctx.fillStyle = '#C62828';
         ctx.beginPath();
         ctx.ellipse(0, 0, boss.width * 0.45, boss.height * 0.45, 0, 0, Math.PI * 2);
