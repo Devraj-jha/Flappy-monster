@@ -42,23 +42,21 @@
   position: absolute;
   top: 4%;
   left: 3%;
-  font-size: clamp(20px, 5vmin, 36px);
-  letter-spacing: 3px;
+  display: flex;
+  gap: 3px;
   pointer-events: none;
   z-index: 10;
-  text-shadow:
-    -1px -1px 0 #000,
-    1px -1px 0 #000,
-    -1px 1px 0 #000,
-    1px 1px 0 #000;
 }
 
-.lives-display .lives-full {
-  color: #ff4d6d;
+.life-heart {
+  width: clamp(18px, 4.5vmin, 32px);
+  height: clamp(18px, 4.5vmin, 32px);
+  display: block;
 }
 
-.lives-display .lives-empty {
-  color: rgba(255, 255, 255, 0.3);
+.life-heart.life-empty {
+  opacity: 0.25;
+  filter: grayscale(1);
 }
 
 .overlay {
@@ -188,6 +186,51 @@
 
 .menu-hint {
   margin-top: 22px;
+}
+
+/* Main-menu buttons (PLAY / SOUNDS) */
+.menu-main {
+  width: min(300px, 84vw);
+  gap: 18px;
+}
+
+.menu-btn.play {
+  background: linear-gradient(to bottom, #4aa8f0, #2f7fd6);
+}
+
+.menu-btn.sounds {
+  background: linear-gradient(to bottom, #a05cce, #7a3fb0);
+}
+
+/* Sounds panel embedded in the main menu */
+.menu-sounds {
+  position: static;
+  width: min(340px, 84vw);
+  margin-bottom: 4px;
+}
+
+.back-btn {
+  margin-top: 18px;
+  padding: 8px 26px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.1s;
+}
+
+.back-btn:hover {
+  background: rgba(0, 0, 0, 0.55);
+  transform: translateY(-1px);
+}
+
+.back-btn:active {
+  transform: translateY(1px);
 }
 
 .overlay-actions {

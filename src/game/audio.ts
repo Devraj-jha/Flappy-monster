@@ -138,7 +138,7 @@ class MusicPlayer {
 // ---- Sound effects (jump) ----
 class SfxPlayer {
   private jumpEl: HTMLAudioElement | null = null;
-  volume = 0.5;
+  volume = 1;
 
   private jump() {
     if (typeof Audio === 'undefined') return null;
@@ -169,7 +169,7 @@ export const audio = {
   init() {
     this.music.volume = readNum(MUSIC_VOL_KEY, 0.4);
     this.music.enabled = readBool(MUSIC_ON_KEY, true);
-    this.sfx.volume = readNum(SFX_VOL_KEY, 0.5);
+    this.sfx.volume = readNum(SFX_VOL_KEY, 1);
   },
 
   setMusicVolume(v: number, persist = true) {

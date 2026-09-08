@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useFlappyBird } from '../game/useFlappyBird';
 import { GAME_WIDTH, GAME_HEIGHT, type DifficultyLevel } from '../game/constants';
 import { audio } from '../game/audio';
+import heartImgSrc from '../assets/heart.png';
 import './Game.css';
 
 interface GameProps {
@@ -22,13 +23,20 @@ export function Game({ onPlay }: GameProps) {
   const playing = gameState === 'playing';
   const idle = gameState === 'idle';
 
+  // Main-menu sub-view ('play' and 'sounds' both live inside the menu)
+  const [menuView, setMenuView] = useState<'main' | 'play' | 'sounds'>('main');
+
   // Settings panel state
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [musicVol, setMusicVol] = useState<number>(() => {
     try { return Number(localStorage.getItem('flappyMusicVol')) || 0.4; } catch { return 0.4; }
   });
   const [sfxVol, setSfxVol] = useState<number>(() => {
-    try { return Number(localStorage.getItem('flappySfxVol')) || 0.5; } catch { return 0.5; }
+    try {
+      const saved = localStorage.getItem('flappySfxVol');
+      const v = saved === null ? 1 : Number(saved);
+      return Number.isFinite(v) ? v : 1;
+    } catch { return 1; }
   });
   const [musicOn, setMusicOn] = useState<boolean>(() => {
     try { return localStorage.getItem('flappyMusicOn') !== '0'; } catch { return true; }
@@ -51,13 +59,17 @@ export function Game({ onPlay }: GameProps) {
   }, [musicOn]);
 
   const livesFull = Math.min(lives, 5);
-  const livesEmpty = Math.max(0, 5 - lives);
 
   const handleSelect = (level: DifficultyLevel) => {
     localStorage.setItem('flappyDifficulty', level);
     setDifficulty(level);
     startGame(level);
     onPlay?.();
+  };
+
+  const handleBackToMenu = () => {
+    setMenuView('main');
+    backToMenu();
   };
 
   // Global input handling
@@ -105,14 +117,16 @@ export function Game({ onPlay }: GameProps) {
         style={{ borderRadius: 0 }}
       />
 
-      {/* Settings gear — visible on all screens */}
-      <button
-        className="settings-toggle"
-        onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); }}
-        aria-label="Open settings"
-      >
-        ⚙️
-      </button>
+      {/* Settings gear — visible during gameplay so you can tweak sound live */}
+      {!idle && (
+        <button
+          className="settings-toggle"
+          onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); }}
+          aria-label="Open settings"
+        >
+          ⚙️
+        </button>
+      )}
 
       {/* Settings panel */}
       {settingsOpen && (
@@ -156,8 +170,14 @@ export function Game({ onPlay }: GameProps) {
       {playing && (
         <div className="hud">
           <div className="lives-display" aria-label={`Lives: ${lives}`}>
-            <span className="lives-full">{'♥'.repeat(livesFull)}</span>
-            <span className="lives-empty">{'♡'.repeat(livesEmpty)}</span>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <img
+                key={i}
+                src={heartImgSrc}
+                alt=""
+                className={`life-heart ${i < livesFull ? 'life-full' : 'life-empty'}`}
+              />
+            ))}
           </div>
           <div className="score-display">{score}</div>
         </div>
@@ -166,24 +186,86 @@ export function Game({ onPlay }: GameProps) {
       {idle && (
         <div className="overlay">
           <h1 className="game-title">Flappy Monster</h1>
-          <p className="subtitle">Choose your difficulty</p>
 
-          <div className="menu">
-            <button className="menu-btn easy" onClick={() => handleSelect('easy')}>
-              <span className="menu-name">EASY</span>
-              <span className="menu-desc">Slow &amp; wide gaps, no bosses</span>
-            </button>
-            <button className="menu-btn medium" onClick={() => handleSelect('medium')}>
-              <span className="menu-name">MEDIUM</span>
-              <span className="menu-desc">Classic pace, bosses every 10</span>
-            </button>
-            <button className="menu-btn hard" onClick={() => handleSelect('hard')}>
-              <span className="menu-name">HARD</span>
-              <span className="menu-desc">Fast &amp; tight, bosses every 5</span>
-            </button>
-          </div>
+          {menuView === 'main' && (
+            <>
+              <p className="subtitle">Ready to play?</p>
+              <div className="menu menu-main">
+                <button className="menu-btn play" onClick={() => setMenuView('play')}>
+                  <span className="menu-name">▶ PLAY</span>
+                  <span className="menu-desc">Pick your difficulty</span>
+                </button>
+                <button className="menu-btn sounds" onClick={() => setMenuView('sounds')}>
+                  <span className="menu-name">🔊 SOUNDS</span>
+                  <span className="menu-desc">Music &amp; sound effects</span>
+                </button>
+              </div>
+              <p className="tap-hint menu-hint">Make a selection to continue</p>
+            </>
+          )}
 
-          <p className="tap-hint menu-hint">Pick a mode to start</p>
+          {menuView === 'play' && (
+            <>
+              <p className="subtitle">Choose your difficulty</p>
+              <div className="menu">
+                <button className="menu-btn easy" onClick={() => handleSelect('easy')}>
+                  <span className="menu-name">EASY</span>
+                  <span className="menu-desc">Slow &amp; wide gaps, no bosses</span>
+                </button>
+                <button className="menu-btn medium" onClick={() => handleSelect('medium')}>
+                  <span className="menu-name">MEDIUM</span>
+                  <span className="menu-desc">Classic pace, bosses every 10</span>
+                </button>
+                <button className="menu-btn hard" onClick={() => handleSelect('hard')}>
+                  <span className="menu-name">HARD</span>
+                  <span className="menu-desc">Fast &amp; tight, bosses every 5</span>
+                </button>
+              </div>
+              <button className="back-btn" onClick={() => setMenuView('main')}>← BACK</button>
+            </>
+          )}
+
+          {menuView === 'sounds' && (
+            <>
+              <p className="subtitle">Sound settings</p>
+              <div className="settings-panel menu-sounds">
+                <div className="settings-row">
+                  <span className="settings-label">🎵 Music</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(musicVol * 100)}
+                    onChange={(e) => handleMusicVolChange(Number(e.target.value) / 100)}
+                    className="settings-slider"
+                  />
+                  <span className="settings-val">{Math.round(musicVol * 100)}%</span>
+                </div>
+                <div className="settings-row">
+                  <span className="settings-label">🔊 SFX</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(sfxVol * 100)}
+                    onChange={(e) => handleSfxVolChange(Number(e.target.value) / 100)}
+                    className="settings-slider"
+                  />
+                  <span className="settings-val">{Math.round(sfxVol * 100)}%</span>
+                </div>
+                <div className="settings-row settings-row-toggle">
+                  <span className="settings-label">Music On/Off</span>
+                  <button
+                    className={`settings-toggle-btn ${musicOn ? 'on' : 'off'}`}
+                    onClick={handleMusicToggle}
+                  >
+                    {musicOn ? '🔊 ON' : '🔇 OFF'}
+                  </button>
+                </div>
+              </div>
+              <button className="back-btn" onClick={() => setMenuView('main')}>← BACK</button>
+            </>
+          )}
         </div>
       )}
 
@@ -201,7 +283,7 @@ export function Game({ onPlay }: GameProps) {
             <button className="btn" onClick={handleRetryBtn}>
               RETRY
             </button>
-            <button className="btn btn-ghost" onClick={() => backToMenu()}>
+            <button className="btn btn-ghost" onClick={handleBackToMenu}>
               MENU
             </button>
           </div>

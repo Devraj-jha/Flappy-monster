@@ -73,3 +73,12 @@ export interface GameResult {
 }
 
 export type Medal = '🥉' | '🥈' | '🥇' | '🏆';
+
+export interface HeartParticle {
+  startX: number;
+  startY: number;
+  targetX: number;
+  targetY: number;
+  progress: number; // 0..1
+  granted: boolean;
+}

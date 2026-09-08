@@ -10,10 +10,15 @@ import type {
   Boss,
   Fireball,
   ActiveEffects,
+  HeartParticle,
 } from './types';
+import birdImgSrc from '../assets/bird.png';
 import m1ImgSrc from '../assets/m1.gif';
 import m2ImgSrc from '../assets/m2.gif';
 import m3ImgSrc from '../assets/m3.gif';
+import heartImgSrc from '../assets/heart.png';
+import speedImgSrc from '../assets/speed.png';
+import invisibleImgSrc from '../assets/invisible.png';
 import bgImgSrc from '../assets/background.png';
 import { audio } from './audio';
 import {
@@ -51,6 +56,7 @@ interface GameEngine {
   bgScrollX: number;
   clouds: Cloud[];
   activeEffects: ActiveEffects;
+  heartParticles: HeartParticle[];
   state: GameState;
 }
 
@@ -95,6 +101,7 @@ function createEngine(difficulty: DifficultyLevel): GameEngine {
     bgScrollX: 0,
     clouds: createClouds(),
     activeEffects: { shield: 0, speed: 0, multiplier: 0, invisible: 0 },
+    heartParticles: [],
     state: 'idle',
   };
 }
@@ -124,8 +131,10 @@ export function useFlappyBird(
   const engineRef = useRef<GameEngine>(createEngine(difficulty));
   const birdImageRef = useRef<HTMLImageElement | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
-  const monsterImages = useRef<Record<DifficultyLevel, HTMLImageElement | null>>({ easy: null, medium: null, hard: null });
-  const monsterLoaded = useRef<Record<DifficultyLevel, boolean>>({ easy: false, medium: false, hard: false });
+  const heartImageRef = useRef<HTMLImageElement | null>(null);
+  const speedImageRef = useRef<HTMLImageElement | null>(null);
+  const invisibleImageRef = useRef<HTMLImageElement | null>(null);
+  const bossImagesRef = useRef<Record<Boss['type'], HTMLCanvasElement | null>>({ fire: null, wave: null, beam: null });
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(START_LIVES);
@@ -163,21 +172,57 @@ export function useFlappyBird(
 
   // ---------- Load images ----------
   useEffect(() => {
-    const monsters: { key: DifficultyLevel; src: string }[] = [
-      { key: 'easy', src: m1ImgSrc },
-      { key: 'medium', src: m3ImgSrc },
-      { key: 'hard', src: m2ImgSrc },
+    // Player bird
+    const birdImg = new Image();
+    birdImg.src = birdImgSrc;
+    birdImg.onload = () => { birdImageRef.current = birdImg; };
+
+    // Boss sprites (fire, wave, beam) — pre-cleaned into canvases
+    const bossMap: { key: Boss['type']; src: string }[] = [
+      { key: 'fire', src: m1ImgSrc },
+      { key: 'wave', src: m2ImgSrc },
+      { key: 'beam', src: m3ImgSrc },
     ];
-    for (const { key, src } of monsters) {
+    for (const { key, src } of bossMap) {
       const img = new Image();
       img.src = src;
       img.onload = () => {
-        monsterImages.current[key] = img;
-        monsterLoaded.current[key] = true;
-        birdImageRef.current = img; // default to current difficulty
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const offCtx = c.getContext('2d');
+        if (offCtx) {
+          offCtx.drawImage(img, 0, 0);
+          // m3.gif (beam) has an opaque gray background — remove it
+          if (key === 'beam') {
+            const imageData = offCtx.getImageData(0, 0, c.width, c.height);
+            const d = imageData.data;
+            for (let i = 0; i < d.length; i += 4) {
+              if (d[i] === 192 && d[i + 1] === 192 && d[i + 2] === 192) {
+                d[i + 3] = 0;
+              }
+            }
+            offCtx.putImageData(imageData, 0, 0);
+          }
+        }
+        bossImagesRef.current[key] = c;
       };
     }
 
+    // Power-up orb images
+    const heartImg = new Image();
+    heartImg.src = heartImgSrc;
+    heartImg.onload = () => { heartImageRef.current = heartImg; };
+
+    const speedImg = new Image();
+    speedImg.src = speedImgSrc;
+    speedImg.onload = () => { speedImageRef.current = speedImg; };
+
+    const invisibleImg = new Image();
+    invisibleImg.src = invisibleImgSrc;
+    invisibleImg.onload = () => { invisibleImageRef.current = invisibleImg; };
+
+    // Background
     const bgImg = new Image();
     bgImg.src = bgImgSrc;
     bgImg.onload = () => { bgImageRef.current = bgImg; };
@@ -485,14 +530,15 @@ export function useFlappyBird(
       setLives(engine.lives);
     };
 
-    // A single hit: shield absorbs it, else lose a life (with brief invincibility),
-    // else the last life is gone -> game over.
+    // A single hit: shield absorbs it, else lose a heart (with brief invincibility),
+    // else the last heart is gone -> game over.
     const registerHit = (engine: GameEngine): boolean => {
       if (engine.activeEffects.shield > 0) {
         engine.activeEffects.shield = 0;
+        engine.invincible = INVINCIBLE_FRAMES;
         return false;
       }
-      if (engine.lives > 1) {
+      if (engine.lives > 0) {
         engine.lives -= 1;
         engine.invincible = INVINCIBLE_FRAMES;
         setLives(engine.lives);
@@ -514,7 +560,15 @@ export function useFlappyBird(
         if (dist < BIRD_SIZE * 0.5 + p.radius) {
           p.collected = true;
           if (p.type === 'heart') {
-            grantHeart(engine);
+            // Spawn heart animation particle — grant when animation completes
+            engine.heartParticles.push({
+              startX: p.x,
+              startY: p.y,
+              targetX: 30,
+              targetY: 25,
+              progress: 0,
+              granted: false,
+            });
           } else {
             engine.activeEffects[p.type] = EFFECT_DURATION;
           }
@@ -735,23 +789,7 @@ export function useFlappyBird(
       if (!flicker && img && img.complete && img.naturalWidth > 0) {
         const drawW = BIRD_SIZE * 1.35;
         const drawH = BIRD_SIZE * 1.35;
-        const isMedium = engine.difficulty === 'medium';
-        if (isMedium) {
-          // m3.gif has a white background — remove it via offscreen compositing
-          const offscreen = document.createElement('canvas');
-          offscreen.width = img.naturalWidth;
-          offscreen.height = img.naturalHeight;
-          const offCtx = offscreen.getContext('2d');
-          if (offCtx) {
-            offCtx.drawImage(img, 0, 0);
-            offCtx.globalCompositeOperation = 'destination-in';
-            offCtx.fillStyle = '#000';
-            offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
-          }
-          ctx.drawImage(offscreen, -drawW / 2, -drawH / 2, drawW, drawH);
-        } else {
-          ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
-        }
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
       } else if (!flicker) {
         ctx.fillStyle = '#F5C842';
         ctx.beginPath();
@@ -801,100 +839,50 @@ export function useFlappyBird(
       ctx.arc(-3, -4, p.radius * 0.35, 0, Math.PI * 2);
       ctx.fill();
 
-      // Label
+      // Draw image on top if available, else fallback to emoji label
+      const imgForType: Record<string, HTMLImageElement | null> = {
+        heart: heartImageRef.current,
+        speed: speedImageRef.current,
+        invisible: invisibleImageRef.current,
+      };
+      const assetImg = imgForType[p.type];
+
       ctx.shadowBlur = 0;
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(c.label, 0, 0);
+      if (assetImg && assetImg.complete && assetImg.naturalWidth > 0) {
+        const imgSize = p.radius * 1.4;
+        ctx.drawImage(assetImg, -imgSize / 2, -imgSize / 2, imgSize, imgSize);
+      } else {
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.label, 0, 0);
+      }
 
       ctx.restore();
     };
 
     const drawBoss = (boss: Boss, frameCount: number) => {
-      const pal = {
-        fire: { body: '#C62828', dark: '#8B1A1A', pupil: '#FF0000' },
-        wave: { body: '#8E44AD', dark: '#5B2C6F', pupil: '#00E5FF' },
-        beam: { body: '#1F7A9E', dark: '#11465E', pupil: '#FFE033' },
-      }[boss.type];
-
+      const bossCanvas = bossImagesRef.current[boss.type];
       ctx.save();
+      ctx.translate(boss.x, boss.y);
 
-      // Spiky outline
-      ctx.fillStyle = pal.dark;
-      const spikes = 8;
-      ctx.beginPath();
-      for (let i = 0; i < spikes; i++) {
-        const angle = (i / spikes) * Math.PI * 2;
-        const outerR = boss.width * 0.55 + Math.sin(frameCount * 0.1 + i) * 5;
-        const innerR = boss.width * 0.35;
-        const ox = boss.x + Math.cos(angle) * outerR;
-        const oy = boss.y + Math.sin(angle) * outerR * 0.7;
-        const ix = boss.x + Math.cos(angle + Math.PI / spikes) * innerR;
-        const iy = boss.y + Math.sin(angle + Math.PI / spikes) * innerR * 0.7;
-        ctx.lineTo(ox, oy);
-        ctx.lineTo(ix, iy);
-      }
-      ctx.closePath();
-      ctx.fill();
+      // Bob
+      const bob = Math.sin(frameCount * 0.07) * 4;
+      ctx.translate(0, bob);
 
-      // Main body
-      ctx.fillStyle = pal.body;
-      ctx.beginPath();
-      ctx.ellipse(boss.x, boss.y, boss.width * 0.45, boss.height * 0.45, 0, 0, Math.PI * 2);
-      ctx.fill();
+      const drawW = boss.width * 1.8;
+      const drawH = boss.height * 1.8;
 
-      // Darker body detail
-      ctx.fillStyle = pal.dark;
-      ctx.beginPath();
-      ctx.ellipse(boss.x, boss.y + 8, boss.width * 0.35, boss.height * 0.28, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Mouth
-      ctx.fillStyle = '#1A0000';
-      ctx.beginPath();
-      ctx.ellipse(boss.x, boss.y + 14, boss.width * 0.22, boss.height * 0.12, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Teeth
-      ctx.fillStyle = '#FFF';
-      const teethCount = 6;
-      for (let i = 0; i < teethCount; i++) {
-        const tx = boss.x - boss.width * 0.18 + (i / (teethCount - 1)) * boss.width * 0.36;
+      if (bossCanvas) {
+        // Pre-cleaned canvas — draw directly
+        ctx.drawImage(bossCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
+      } else {
+        // Fallback: procedural boss if image not loaded
+        ctx.fillStyle = '#C62828';
         ctx.beginPath();
-        ctx.moveTo(tx - 3, boss.y + 10);
-        ctx.lineTo(tx + 3, boss.y + 10);
-        ctx.lineTo(tx, boss.y + 16);
-        ctx.closePath();
+        ctx.ellipse(0, 0, boss.width * 0.45, boss.height * 0.45, 0, 0, Math.PI * 2);
         ctx.fill();
       }
-
-      // Eyes
-      const eyeSpread = boss.width * 0.18;
-      const eyeY = boss.y - 10;
-      const eyeW = 12;
-      const eyeH = 14;
-
-      // Eye whites
-      ctx.fillStyle = '#FFF';
-      ctx.beginPath();
-      ctx.ellipse(boss.x - eyeSpread, eyeY, eyeW, eyeH, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(boss.x + eyeSpread, eyeY, eyeW, eyeH, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Pupils (follow bird slightly)
-      ctx.fillStyle = pal.pupil;
-      ctx.shadowColor = '#FF0000';
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.arc(boss.x - eyeSpread + 2, eyeY, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(boss.x + eyeSpread + 2, eyeY, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
 
       ctx.restore();
     };
@@ -1058,6 +1046,47 @@ export function useFlappyBird(
       }
     };
 
+    // ---------- Heart particle animation ----------
+
+    const HEART_ANIM_FRAMES = 45;
+
+    const easeInOutCubic = (t: number) =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    const updateHeartParticles = (engine: GameEngine) => {
+      for (let i = engine.heartParticles.length - 1; i >= 0; i--) {
+        const hp = engine.heartParticles[i];
+        hp.progress += 1 / HEART_ANIM_FRAMES;
+        if (hp.progress >= 1 && !hp.granted) {
+          hp.granted = true;
+          grantHeart(engine);
+        }
+        // Remove after fade-out completes
+        if (hp.progress > 1.15) {
+          engine.heartParticles.splice(i, 1);
+        }
+      }
+    };
+
+    const drawHeartParticles = (engine: GameEngine) => {
+      if (!heartImageRef.current) return;
+      for (const hp of engine.heartParticles) {
+        const t = Math.min(hp.progress, 1);
+        const eased = easeInOutCubic(t);
+        const x = hp.startX + (hp.targetX - hp.startX) * eased;
+        const y = hp.startY + (hp.targetY - hp.startY) * eased - Math.sin(t * Math.PI) * 55;
+        const alpha = hp.progress < 1
+          ? Math.max(0.15, 1 - t * 0.6)
+          : Math.max(0, 0.4 - (hp.progress - 1) * 3);
+        const scale = hp.progress < 1 ? 1 - t * 0.3 : Math.max(0.3, 0.7 - (hp.progress - 1) * 3);
+        const size = POWERUP_SIZE * scale;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(heartImageRef.current, x - size / 2, y - size / 2, size, size);
+        ctx.restore();
+      }
+    };
+
     // ---------- Main frame ----------
 
     const frame = () => {
@@ -1090,6 +1119,9 @@ export function useFlappyBird(
         }
       }
 
+      // Update heart particles (always, so pending grants complete)
+      updateHeartParticles(engine);
+
       // Drawing
       drawBackground(engine);
       drawClouds(engine);
@@ -1108,6 +1140,7 @@ export function useFlappyBird(
       engine.fireballs.forEach((fb) => drawFireball(fb, engine.frameCount));
       engine.powerUps.forEach((p) => drawPowerUp(p, engine.frameCount));
 
+      drawHeartParticles(engine);
       drawBird(engine);
       drawGround(engine);
 
@@ -1129,9 +1162,6 @@ export function useFlappyBird(
     if (engine.state === 'idle') {
       // Start music on user gesture (browser autoplay policy)
       audio.startMusic();
-      // Update bird sprite for selected difficulty
-      const mImg = monsterImages.current[level];
-      if (mImg) birdImageRef.current = mImg;
       const next = createEngine(level);
       next.state = 'playing';
       next.bird.flapFrame = 1;
@@ -1147,8 +1177,6 @@ export function useFlappyBird(
   const restartGame = () => {
     // Resume music on user gesture
     audio.startMusic();
-    const mImg = monsterImages.current[difficulty];
-    if (mImg) birdImageRef.current = mImg;
     const next = createEngine(difficulty);
     next.state = 'playing';
     next.bird.flapFrame = 1;
