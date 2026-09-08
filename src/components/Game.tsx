@@ -68,6 +68,7 @@ export function Game({ onPlay }: GameProps) {
         role="img"
         aria-label="Flappy Monster game"
         className={playing ? 'game-canvas active' : 'game-canvas'}
+        style={{ borderRadius: 0 }}
       />
 
       {playing && <div className="score-display">{score}</div>}
