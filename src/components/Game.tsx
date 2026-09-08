@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useFlappyBird } from '../game/useFlappyBird';
 import { GAME_WIDTH, GAME_HEIGHT, type DifficultyLevel } from '../game/constants';
+import { audio } from '../game/audio';
 import './Game.css';
 
 interface GameProps {
@@ -20,6 +21,34 @@ export function Game({ onPlay }: GameProps) {
 
   const playing = gameState === 'playing';
   const idle = gameState === 'idle';
+
+  // Settings panel state
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [musicVol, setMusicVol] = useState<number>(() => {
+    try { return Number(localStorage.getItem('flappyMusicVol')) || 0.4; } catch { return 0.4; }
+  });
+  const [sfxVol, setSfxVol] = useState<number>(() => {
+    try { return Number(localStorage.getItem('flappySfxVol')) || 0.5; } catch { return 0.5; }
+  });
+  const [musicOn, setMusicOn] = useState<boolean>(() => {
+    try { return localStorage.getItem('flappyMusicOn') !== '0'; } catch { return true; }
+  });
+
+  const handleMusicVolChange = useCallback((v: number) => {
+    setMusicVol(v);
+    audio.setMusicVolume(v);
+  }, []);
+
+  const handleSfxVolChange = useCallback((v: number) => {
+    setSfxVol(v);
+    audio.setSfxVolume(v);
+  }, []);
+
+  const handleMusicToggle = useCallback(() => {
+    const next = !musicOn;
+    setMusicOn(next);
+    audio.setMusicEnabled(next);
+  }, [musicOn]);
 
   const livesFull = Math.min(lives, 5);
   const livesEmpty = Math.max(0, 5 - lives);
@@ -75,6 +104,54 @@ export function Game({ onPlay }: GameProps) {
         className={playing ? 'game-canvas active' : 'game-canvas'}
         style={{ borderRadius: 0 }}
       />
+
+      {/* Settings gear — visible on all screens */}
+      <button
+        className="settings-toggle"
+        onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); }}
+        aria-label="Open settings"
+      >
+        ⚙️
+      </button>
+
+      {/* Settings panel */}
+      {settingsOpen && (
+        <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="settings-row">
+            <span className="settings-label">🎵 Music</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(musicVol * 100)}
+              onChange={(e) => handleMusicVolChange(Number(e.target.value) / 100)}
+              className="settings-slider"
+            />
+            <span className="settings-val">{Math.round(musicVol * 100)}%</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">🔊 SFX</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(sfxVol * 100)}
+              onChange={(e) => handleSfxVolChange(Number(e.target.value) / 100)}
+              className="settings-slider"
+            />
+            <span className="settings-val">{Math.round(sfxVol * 100)}%</span>
+          </div>
+          <div className="settings-row settings-row-toggle">
+            <span className="settings-label">Music On/Off</span>
+            <button
+              className={`settings-toggle-btn ${musicOn ? 'on' : 'off'}`}
+              onClick={handleMusicToggle}
+            >
+              {musicOn ? '🔊 ON' : '🔇 OFF'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {playing && (
         <div className="hud">

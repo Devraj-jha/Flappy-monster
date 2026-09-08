@@ -11,9 +11,11 @@ import type {
   Fireball,
   ActiveEffects,
 } from './types';
-import birdImgSrc from '../assets/bird.png';
+import m1ImgSrc from '../assets/m1.gif';
+import m2ImgSrc from '../assets/m2.gif';
+import m3ImgSrc from '../assets/m3.gif';
 import bgImgSrc from '../assets/background.png';
-import jumpSound from '../sound/jump.mp3';
+import { audio } from './audio';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -53,7 +55,7 @@ interface GameEngine {
 }
 
 function createClouds(): Cloud[] {
-  return Array.from({ length: 6 }, (_, i) => ({
+  return Array.from({ length: 6 }, () => ({
     x: Math.random() * GAME_WIDTH,
     y: 30 + Math.random() * 160,
     width: 80 + Math.random() * 100,
@@ -122,12 +124,8 @@ export function useFlappyBird(
   const engineRef = useRef<GameEngine>(createEngine(difficulty));
   const birdImageRef = useRef<HTMLImageElement | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
-  const jumpAudioRef = useRef<HTMLAudioElement | null>(null);
-  if (!jumpAudioRef.current && typeof Audio !== 'undefined') {
-    const audio = new Audio(jumpSound);
-    audio.volume = 0.5;
-    jumpAudioRef.current = audio;
-  }
+  const monsterImages = useRef<Record<DifficultyLevel, HTMLImageElement | null>>({ easy: null, medium: null, hard: null });
+  const monsterLoaded = useRef<Record<DifficultyLevel, boolean>>({ easy: false, medium: false, hard: false });
   const [gameState, setGameState] = useState<GameState>('idle');
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(START_LIVES);
@@ -165,9 +163,20 @@ export function useFlappyBird(
 
   // ---------- Load images ----------
   useEffect(() => {
-    const birdImg = new Image();
-    birdImg.src = birdImgSrc;
-    birdImg.onload = () => { birdImageRef.current = birdImg; };
+    const monsters: { key: DifficultyLevel; src: string }[] = [
+      { key: 'easy', src: m1ImgSrc },
+      { key: 'medium', src: m3ImgSrc },
+      { key: 'hard', src: m2ImgSrc },
+    ];
+    for (const { key, src } of monsters) {
+      const img = new Image();
+      img.src = src;
+      img.onload = () => {
+        monsterImages.current[key] = img;
+        monsterLoaded.current[key] = true;
+        birdImageRef.current = img; // default to current difficulty
+      };
+    }
 
     const bgImg = new Image();
     bgImg.src = bgImgSrc;
@@ -693,7 +702,7 @@ export function useFlappyBird(
       // Shield aura
       if (engine.activeEffects.shield > 0) {
         ctx.save();
-        ctx.rotate(-(bird.rotation * Math.PI) / 180); // undo rotation for aura
+        ctx.rotate(-(bird.rotation * Math.PI) / 180);
         const pulse = Math.sin(engine.frameCount * 0.15) * 4 + 24;
         ctx.fillStyle = `rgba(100, 180, 255, ${0.25 + Math.sin(engine.frameCount * 0.1) * 0.1})`;
         ctx.beginPath();
@@ -703,7 +712,7 @@ export function useFlappyBird(
         ctx.lineWidth = 2.5;
         ctx.stroke();
         ctx.restore();
-        ctx.rotate((bird.rotation * Math.PI) / 180); // re-apply rotation
+        ctx.rotate((bird.rotation * Math.PI) / 180);
       }
 
       // Speed trail
@@ -722,12 +731,27 @@ export function useFlappyBird(
       }
 
       const img = birdImageRef.current;
-      // Blink while invincible (flash effect after taking a hit)
       const flicker = engine.invincible > 0 && Math.floor(engine.frameCount / 4) % 2 === 0;
       if (!flicker && img && img.complete && img.naturalWidth > 0) {
         const drawW = BIRD_SIZE * 1.35;
         const drawH = BIRD_SIZE * 1.35;
-        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+        const isMedium = engine.difficulty === 'medium';
+        if (isMedium) {
+          // m3.gif has a white background — remove it via offscreen compositing
+          const offscreen = document.createElement('canvas');
+          offscreen.width = img.naturalWidth;
+          offscreen.height = img.naturalHeight;
+          const offCtx = offscreen.getContext('2d');
+          if (offCtx) {
+            offCtx.drawImage(img, 0, 0);
+            offCtx.globalCompositeOperation = 'destination-in';
+            offCtx.fillStyle = '#000';
+            offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
+          }
+          ctx.drawImage(offscreen, -drawW / 2, -drawH / 2, drawW, drawH);
+        } else {
+          ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+        }
       } else if (!flicker) {
         ctx.fillStyle = '#F5C842';
         ctx.beginPath();
@@ -793,9 +817,6 @@ export function useFlappyBird(
         wave: { body: '#8E44AD', dark: '#5B2C6F', pupil: '#00E5FF' },
         beam: { body: '#1F7A9E', dark: '#11465E', pupil: '#FFE033' },
       }[boss.type];
-
-      const bx = boss.x - boss.width / 2;
-      const by = boss.y - boss.height / 2;
 
       ctx.save();
 
@@ -1106,6 +1127,11 @@ export function useFlappyBird(
   const startGame = (level: DifficultyLevel = difficulty) => {
     const engine = engineRef.current;
     if (engine.state === 'idle') {
+      // Start music on user gesture (browser autoplay policy)
+      audio.startMusic();
+      // Update bird sprite for selected difficulty
+      const mImg = monsterImages.current[level];
+      if (mImg) birdImageRef.current = mImg;
       const next = createEngine(level);
       next.state = 'playing';
       next.bird.flapFrame = 1;
@@ -1119,6 +1145,10 @@ export function useFlappyBird(
   };
 
   const restartGame = () => {
+    // Resume music on user gesture
+    audio.startMusic();
+    const mImg = monsterImages.current[difficulty];
+    if (mImg) birdImageRef.current = mImg;
     const next = createEngine(difficulty);
     next.state = 'playing';
     next.bird.flapFrame = 1;
@@ -1136,13 +1166,7 @@ export function useFlappyBird(
     if (engine.state === 'playing') {
       engine.bird.velocity = engine.config.flapForce;
       engine.bird.flapFrame = 1;
-
-      // Jump sound
-      const audio = jumpAudioRef.current;
-      if (audio) {
-        try { audio.currentTime = 0; } catch { /* ignored */ }
-        audio.play().catch(() => {});
-      }
+      audio.sfx.playJump();
     }
   };
 
