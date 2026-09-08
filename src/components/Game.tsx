@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFlappyBird } from '../game/useFlappyBird';
-import { GAME_WIDTH, GAME_HEIGHT } from '../game/constants';
+import { GAME_WIDTH, GAME_HEIGHT, type DifficultyLevel } from '../game/constants';
 import './Game.css';
 
 interface GameProps {
@@ -9,21 +9,31 @@ interface GameProps {
 
 export function Game({ onPlay }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { gameState, score, best, result, gameOverVisible, startGame, restartGame, flap } =
-    useFlappyBird(canvasRef);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>(
+    () => {
+      const saved = localStorage.getItem('flappyDifficulty');
+      return saved === 'easy' || saved === 'medium' || saved === 'hard' ? saved : 'easy';
+    },
+  );
+  const { gameState, score, best, result, gameOverVisible, startGame, restartGame, flap, backToMenu } =
+    useFlappyBird(canvasRef, difficulty);
 
   const playing = gameState === 'playing';
   const idle = gameState === 'idle';
+
+  const handleSelect = (level: DifficultyLevel) => {
+    localStorage.setItem('flappyDifficulty', level);
+    setDifficulty(level);
+    startGame(level);
+    onPlay?.();
+  };
 
   // Global input handling
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
-        if (gameState === 'idle') {
-          startGame();
-          onPlay?.();
-        } else if (gameState === 'playing') {
+        if (gameState === 'playing') {
           flap();
         } else if (gameState === 'dead' && gameOverVisible) {
           restartGame();
@@ -32,11 +42,9 @@ export function Game({ onPlay }: GameProps) {
       }
     };
 
+    // On the menu, only the difficulty buttons start a game
     const handlePointer = () => {
-      if (gameState === 'idle') {
-        startGame();
-        onPlay?.();
-      } else if (gameState === 'playing') {
+      if (gameState === 'playing') {
         flap();
       }
     };
@@ -48,12 +56,6 @@ export function Game({ onPlay }: GameProps) {
       window.removeEventListener('pointerdown', handlePointer);
     };
   }, [gameState, gameOverVisible, startGame, restartGame, flap, onPlay]);
-
-  const handleStartBtn = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    startGame();
-    onPlay?.();
-  };
 
   const handleRetryBtn = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -76,11 +78,24 @@ export function Game({ onPlay }: GameProps) {
       {idle && (
         <div className="overlay">
           <h1 className="game-title">Flappy Monster</h1>
-          <p className="subtitle">Classic Edition</p>
-          <button className="btn" onClick={handleStartBtn}>
-            PLAY
-          </button>
-          <p className="tap-hint">Press SPACE or tap to flap</p>
+          <p className="subtitle">Choose your difficulty</p>
+
+          <div className="menu">
+            <button className="menu-btn easy" onClick={() => handleSelect('easy')}>
+              <span className="menu-name">EASY</span>
+              <span className="menu-desc">Slow &amp; wide gaps, no bosses</span>
+            </button>
+            <button className="menu-btn medium" onClick={() => handleSelect('medium')}>
+              <span className="menu-name">MEDIUM</span>
+              <span className="menu-desc">Classic pace, bosses every 10</span>
+            </button>
+            <button className="menu-btn hard" onClick={() => handleSelect('hard')}>
+              <span className="menu-name">HARD</span>
+              <span className="menu-desc">Fast &amp; tight, bosses every 5</span>
+            </button>
+          </div>
+
+          <p className="tap-hint menu-hint">Pick a mode to start</p>
         </div>
       )}
 
@@ -94,9 +109,14 @@ export function Game({ onPlay }: GameProps) {
           <div className="best-score">
             Best: <span>{result.best}</span>
           </div>
-          <button className="btn" onClick={handleRetryBtn}>
-            RETRY
-          </button>
+          <div className="overlay-actions">
+            <button className="btn" onClick={handleRetryBtn}>
+              RETRY
+            </button>
+            <button className="btn btn-ghost" onClick={() => backToMenu()}>
+              MENU
+            </button>
+          </div>
           <p className="tap-hint">Press SPACE or tap to retry</p>
         </div>
       )}

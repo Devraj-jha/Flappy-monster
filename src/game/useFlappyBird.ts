@@ -8,6 +8,7 @@ import type {
   Cloud,
   PowerUp,
   Boss,
+  Fireball,
   ActiveEffects,
 } from './types';
 import birdImgSrc from '../assets/bird.png';
@@ -15,28 +16,26 @@ import bgImgSrc from '../assets/background.png';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
-  GRAVITY,
-  FLAP_FORCE,
   PIPE_WIDTH,
-  PIPE_GAP,
-  PIPE_SPEED,
-  PIPE_SPAWN_INTERVAL,
   GROUND_HEIGHT,
   BIRD_SIZE,
   PLAY_HEIGHT,
   BEST_SCORE_KEY,
-  POWERUP_SPAWN_CHANCE,
   POWERUP_SIZE,
   EFFECT_DURATION,
-  BOSS_INTERVAL,
-  BOSS_WARNING_FRAMES,
+  getDifficultyConfig,
+  type DifficultyLevel,
+  type DifficultyConfig,
 } from './constants';
 
 interface GameEngine {
+  difficulty: DifficultyLevel;
+  config: DifficultyConfig;
   bird: Bird;
   pipes: Pipe[];
   powerUps: PowerUp[];
   boss: Boss | null;
+  fireballs: Fireball[];
   score: number;
   frameCount: number;
   groundOffset: number;
@@ -56,8 +55,10 @@ function createClouds(): Cloud[] {
   }));
 }
 
-function createEngine(): GameEngine {
+function createEngine(difficulty: DifficultyLevel): GameEngine {
   return {
+    difficulty,
+    config: getDifficultyConfig(difficulty),
     bird: {
       x: 120,
       y: GAME_HEIGHT / 2 - 30,
@@ -68,6 +69,7 @@ function createEngine(): GameEngine {
     pipes: [],
     powerUps: [],
     boss: null,
+    fireballs: [],
     score: 0,
     frameCount: 0,
     groundOffset: 0,
@@ -96,8 +98,11 @@ function medalFor(score: number): GameResult['medal'] {
   return '';
 }
 
-export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
-  const engineRef = useRef<GameEngine>(createEngine());
+export function useFlappyBird(
+  canvasRef: RefObject<HTMLCanvasElement | null>,
+  difficulty: DifficultyLevel,
+) {
+  const engineRef = useRef<GameEngine>(createEngine(difficulty));
   const birdImageRef = useRef<HTMLImageElement | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const [gameState, setGameState] = useState<GameState>('idle');
@@ -159,7 +164,7 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
     const updateBird = (engine: GameEngine) => {
       const bird = engine.bird;
       if (engine.state === 'playing') {
-        bird.velocity += GRAVITY;
+        bird.velocity += engine.config.gravity;
         bird.y += bird.velocity;
         bird.rotation = Math.min(Math.max(bird.velocity * 4, -30), 90);
       } else if (engine.state === 'idle') {
@@ -170,12 +175,12 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
 
     const spawnPipe = (engine: GameEngine) => {
       const minY = 80;
-      const maxY = PLAY_HEIGHT - PIPE_GAP - 80;
+      const maxY = PLAY_HEIGHT - engine.config.pipeGap - 80;
       const topHeight = Math.random() * (maxY - minY) + minY;
       engine.pipes.push({
         x: GAME_WIDTH + PIPE_WIDTH,
         topHeight,
-        bottomY: topHeight + PIPE_GAP,
+        bottomY: topHeight + engine.config.pipeGap,
         scored: false,
       });
     };
@@ -194,17 +199,17 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
       const speedMult = engine.activeEffects.speed > 0 ? 1.5 : 1;
 
       // Scroll background and ground
-      const scrollSpeed = PIPE_SPEED * speedMult;
+      const scrollSpeed = engine.config.pipeSpeed * speedMult;
       engine.bgScrollX = (engine.bgScrollX + scrollSpeed) % GAME_WIDTH;
       engine.groundOffset = (engine.groundOffset - scrollSpeed) % 24;
 
       // Spawn pipes
-      if (engine.frameCount % PIPE_SPAWN_INTERVAL === 0) {
+      if (engine.frameCount % engine.config.pipeSpawnInterval === 0) {
         spawnPipe(engine);
       }
 
       // Spawn power-ups
-      if (Math.random() < POWERUP_SPAWN_CHANCE) {
+      if (Math.random() < engine.config.powerupChance) {
         const types: PowerUp['type'][] = ['shield', 'speed', 'multiplier'];
         const weights = [0.3, 0.4, 0.3];
         const r = Math.random();
@@ -233,16 +238,26 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
           engine.score += engine.activeEffects.multiplier > 0 ? 2 : 1;
           setScore(engine.score);
 
-          // Trigger boss every BOSS_INTERVAL pipes
-          if (engine.score % BOSS_INTERVAL === 0 && !engine.boss) {
+          // Trigger boss on the interval (0 = bosses disabled)
+          if (
+            engine.config.bossInterval > 0 &&
+            engine.score % engine.config.bossInterval === 0 &&
+            !engine.boss
+          ) {
+            // Clear all obstacles -> boss fights in an empty arena
+            engine.pipes = [];
+            engine.powerUps = [];
+            engine.fireballs = [];
             engine.boss = {
-              x: GAME_WIDTH + 120,
-              y: GAME_HEIGHT / 2,
-              width: 100,
-              height: 70,
-              targetY: engine.bird.y,
+              x: GAME_WIDTH + 180,
+              y: GAME_HEIGHT / 2 - 40,
+              width: 110,
+              height: 80,
+              targetX: GAME_WIDTH * 0.68,
+              targetY: GAME_HEIGHT * 0.3,
               moveTimer: 0,
-              health: 1,
+              shootTimer: 70,
+              leaving: false,
             };
           }
         }
@@ -279,66 +294,112 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
 
       boss.moveTimer++;
 
-      // Phase 1: Move toward bird (first 60 frames)
-      if (boss.moveTimer < 60) {
-        const targetY = engine.bird.y;
-        boss.y += (targetY - boss.y) * 0.04;
+      // ENTER: fly in from the right to the arena slot
+      if (!boss.leaving && boss.moveTimer < 80) {
+        boss.x += (boss.targetX - boss.x) * 0.045;
+        if (Math.abs(boss.x - boss.targetX) < 2) boss.x = boss.targetX;
       }
 
-      // Phase 2: Hold position briefly
-      if (boss.moveTimer >= 60 && boss.moveTimer < 90) {
-        boss.y += Math.sin(boss.moveTimer * 0.3) * 1.5;
+      // FIGHT: stationary at the arena slot, bobbing, throwing fireballs
+      if (!boss.leaving && boss.moveTimer >= 80 && boss.moveTimer < 330) {
+        boss.y = boss.targetY + Math.sin(boss.moveTimer * 0.05) * 14;
+
+        boss.shootTimer--;
+        if (boss.shootTimer <= 0) {
+          const count = Math.random() < 0.5 ? 1 : 2; // 1-2 fireballs per burst
+          for (let i = 0; i < count; i++) {
+            const spread = (i - (count - 1) / 2) * 0.18;
+            const ang = Math.atan2(
+              engine.bird.y - boss.y,
+              engine.bird.x - boss.x,
+            ) + spread;
+            engine.fireballs.push({
+              x: boss.x,
+              y: boss.y,
+              vx: Math.cos(ang) * 4.4,
+              vy: Math.sin(ang) * 4.4,
+              radius: 13,
+            });
+          }
+          boss.shootTimer = 58 + Math.floor(Math.random() * 28);
+        }
       }
 
-      // Phase 3: Charge!
-      if (boss.moveTimer >= 90) {
-        boss.x -= PIPE_SPEED * 2.5;
-        boss.y += Math.sin(boss.moveTimer * 0.15) * 3;
+      // LEAVE: fly off to the left when the fight ends
+      if (boss.moveTimer >= 330) {
+        boss.leaving = true;
+        boss.x -= engine.config.pipeSpeed * 3.2;
+        boss.y += Math.sin(boss.moveTimer * 0.1) * 2;
       }
 
-      // Collision with bird
-      const dx = engine.bird.x - boss.x;
-      const dy = engine.bird.y - (boss.y - boss.height / 2 + boss.height / 2);
+      // Boss body collision (the resting body is still dangerous)
       const bx = boss.x - boss.width / 2;
       const by = boss.y - boss.height / 2;
-      const bw = boss.width;
-      const bh = boss.height;
-
       if (
-        engine.bird.x + BIRD_SIZE * 0.4 > bx &&
-        engine.bird.x - BIRD_SIZE * 0.4 < bx + bw &&
-        engine.bird.y + BIRD_SIZE * 0.4 > by &&
-        engine.bird.y - BIRD_SIZE * 0.4 < by + bh
+        engine.bird.x + BIRD_SIZE * 0.38 > bx &&
+        engine.bird.x - BIRD_SIZE * 0.38 < bx + boss.width &&
+        engine.bird.y + BIRD_SIZE * 0.38 > by &&
+        engine.bird.y - BIRD_SIZE * 0.38 < by + boss.height
       ) {
         if (engine.activeEffects.shield > 0) {
-          // Boss defeated by shielded bird!
-          engine.score += 5;
-          setScore(engine.score);
-          engine.boss = null;
-          return false;
+          engine.activeEffects.shield = 0; // shield absorbs the bump
+        } else {
+          return true; // signal death
         }
-        return true; // signal death
       }
 
-      // Boss leaves screen — done
-      if (boss.x + boss.width / 2 < -50) {
+      // Boss fully off-screen -> fight over
+      if (boss.x + boss.width < -60) {
         engine.boss = null;
       }
 
       return false;
     };
 
+    const updateFireballs = (engine: GameEngine): boolean => {
+      if (engine.state !== 'playing') return false;
+
+      for (let i = engine.fireballs.length - 1; i >= 0; i--) {
+        const fb = engine.fireballs[i];
+        fb.x += fb.vx;
+        fb.y += fb.vy;
+
+        // Remove off-screen projectiles
+        if (
+          fb.x - fb.radius > GAME_WIDTH + 30 ||
+          fb.x + fb.radius < -30 ||
+          fb.y - fb.radius > GAME_HEIGHT ||
+          fb.y + fb.radius < -30
+        ) {
+          engine.fireballs.splice(i, 1);
+          continue;
+        }
+
+        // Fireball vs bird
+        const dist = Math.hypot(engine.bird.x - fb.x, engine.bird.y - fb.y);
+        if (dist < BIRD_SIZE * 0.42 + fb.radius) {
+          engine.fireballs.splice(i, 1);
+          if (engine.activeEffects.shield > 0) {
+            engine.activeEffects.shield = 0; // shield absorbs one fireball
+          } else {
+            return true; // signal death
+          }
+        }
+      }
+      return false;
+    };
+
     const checkCollision = (engine: GameEngine): boolean => {
       const bird = engine.bird;
-      if (bird.y + BIRD_SIZE * 0.4 > PLAY_HEIGHT || bird.y - BIRD_SIZE * 0.4 < 0) {
+      if (bird.y + BIRD_SIZE * 0.32 > PLAY_HEIGHT || bird.y - BIRD_SIZE * 0.32 < 0) {
         return true;
       }
 
       for (const pipe of engine.pipes) {
-        const bw = BIRD_SIZE * 0.55;
-        const bh = BIRD_SIZE * 0.4;
+        const bw = BIRD_SIZE * 0.38;
+        const bh = BIRD_SIZE * 0.32;
 
-        if (bird.x + bw > pipe.x - 6 && bird.x - bw < pipe.x + PIPE_WIDTH + 6) {
+        if (bird.x + bw > pipe.x && bird.x - bw < pipe.x + PIPE_WIDTH) {
           if (bird.y - bh < pipe.topHeight) return true;
           if (bird.y + bh > pipe.bottomY) return true;
         }
@@ -697,6 +758,37 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
       ctx.restore();
     };
 
+    const drawFireball = (fb: Fireball, frameCount: number) => {
+      ctx.save();
+
+      // Flame glow
+      ctx.shadowColor = '#FF4500';
+      ctx.shadowBlur = 16 + Math.sin(frameCount * 0.4) * 6;
+
+      // Ball
+      ctx.fillStyle = '#FF5A1F';
+      ctx.beginPath();
+      ctx.arc(fb.x, fb.y, fb.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Hot core
+      ctx.fillStyle = '#FFE033';
+      ctx.beginPath();
+      ctx.arc(fb.x, fb.y, fb.radius * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flickering tail opposite the direction of travel
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = 'rgba(255, 90, 31, 0.55)';
+      for (let i = 1; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.arc(fb.x - fb.vx * i * 1.6, fb.y - fb.vy * i * 1.6, fb.radius * (1 - i * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    };
+
     const drawBossWarning = (engine: GameEngine) => {
       const flash = Math.sin(engine.frameCount * 0.25) > 0;
       if (!flash) return;
@@ -765,8 +857,10 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
         indicatorY += 26;
       }
 
-      // Boss health bar
+      // Boss fight timer bar
       if (engine.boss) {
+        const total = 330;
+        const remaining = Math.max(0, Math.min(1, (total - engine.boss.moveTimer) / total));
         const barW = 160;
         const barH = 10;
         const barX = GAME_WIDTH / 2 - barW / 2;
@@ -774,7 +868,7 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(barX, barY, barW, barH);
         ctx.fillStyle = '#FF4444';
-        ctx.fillRect(barX, barY, barW * Math.max(0, engine.boss.health), barH);
+        ctx.fillRect(barX, barY, barW * remaining, barH);
         ctx.strokeStyle = '#FFF';
         ctx.lineWidth = 1;
         ctx.strokeRect(barX, barY, barW, barH);
@@ -793,7 +887,7 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
       updateBird(engine);
       updatePipes(engine);
 
-      // Boss update
+      // Boss update (movement + fireball spawning)
       if (engine.boss && engine.state === 'playing') {
         const bossDied = updateBoss(engine);
         if (bossDied) {
@@ -801,8 +895,17 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
         }
       }
 
-      // Collision (pipes, ground, ceiling, power-ups)
-      if (engine.state === 'playing' && !engine.boss) {
+      // Fireball update + collision
+      if (engine.state === 'playing') {
+        const fireballHit = updateFireballs(engine);
+        if (fireballHit) {
+          die(engine);
+        }
+      }
+
+      // Pipes, ground, ceiling, power-up collisions
+      // (pipes/power-ups are cleared during the boss, so this just checks ground/ceiling then)
+      if (engine.state === 'playing') {
         if (checkCollision(engine)) {
           if (engine.activeEffects.shield > 0) {
             // Shield absorbs one hit — lose shield
@@ -811,32 +914,22 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
             die(engine);
           }
         }
-      } else if (engine.state === 'playing' && engine.boss) {
-        // Still check power-up collection during boss
-        for (const p of engine.powerUps) {
-          if (p.collected) continue;
-          const dx = engine.bird.x - p.x;
-          const dy = engine.bird.y - p.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < BIRD_SIZE * 0.5 + p.radius) {
-            p.collected = true;
-            engine.activeEffects[p.type] = EFFECT_DURATION;
-          }
-        }
       }
 
       // Drawing
       drawBackground(engine);
       drawClouds(engine);
 
-      // Boss warning
-      if (engine.boss && engine.boss.moveTimer === 0) {
-        drawBossWarning(engine);
-      } else if (engine.boss) {
+      // Boss + warning banner while it flies in
+      if (engine.boss) {
+        if (engine.boss.moveTimer < 80) {
+          drawBossWarning(engine);
+        }
         drawBoss(engine.boss, engine.frameCount);
       }
 
       engine.pipes.forEach((p) => drawPipe(p.x, p.topHeight, p.bottomY));
+      engine.fireballs.forEach((fb) => drawFireball(fb, engine.frameCount));
       engine.powerUps.forEach((p) => drawPowerUp(p, engine.frameCount));
 
       drawBird(engine);
@@ -855,10 +948,10 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
   }, [canvasRef]);
 
   // ---------- Public actions ----------
-  const startGame = () => {
+  const startGame = (level: DifficultyLevel = difficulty) => {
     const engine = engineRef.current;
     if (engine.state === 'idle') {
-      const next = createEngine();
+      const next = createEngine(level);
       next.state = 'playing';
       next.bird.flapFrame = 1;
       engineRef.current = next;
@@ -871,7 +964,7 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
   };
 
   const restartGame = () => {
-    const next = createEngine();
+    const next = createEngine(difficulty);
     next.state = 'playing';
     next.bird.flapFrame = 1;
     engineRef.current = next;
@@ -885,10 +978,31 @@ export function useFlappyBird(canvasRef: RefObject<HTMLCanvasElement | null>) {
   const flap = () => {
     const engine = engineRef.current;
     if (engine.state === 'playing') {
-      engine.bird.velocity = FLAP_FORCE;
+      engine.bird.velocity = engine.config.flapForce;
       engine.bird.flapFrame = 1;
     }
   };
 
-  return { gameState, score, best, result, gameOverVisible, startGame, restartGame, flap };
+  const backToMenu = () => {
+    const next = createEngine(difficulty);
+    next.state = 'idle';
+    engineRef.current = next;
+    stateRef.current = 'idle';
+    setGameState('idle');
+    setScore(0);
+    setResult(null);
+    setGameOverVisible(false);
+  };
+
+  return {
+    gameState,
+    score,
+    best,
+    result,
+    gameOverVisible,
+    startGame,
+    restartGame,
+    flap,
+    backToMenu,
+  };
 }

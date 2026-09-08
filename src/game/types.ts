@@ -34,9 +34,19 @@ export interface Boss {
   y: number;
   width: number;
   height: number;
+  targetX: number;   // resting arena position
   targetY: number;
-  moveTimer: number;
-  health: number;
+  moveTimer: number; // frames since boss began
+  shootTimer: number;// frames until next volley
+  leaving: boolean;  // final fly-away phase
+}
+
+export interface Fireball {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
 }
 
 export interface ActiveEffects {
